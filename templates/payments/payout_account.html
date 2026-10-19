@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block title %}Payout account · Artisan Market{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <div class="eyebrow">Artisan finance</div>
+    <h1>Payout account</h1>
+    <p>Choose a bank supported by Flutterwave. Account names are checked against your verified identity and artisan profile.</p>
+  </div>
+</section>
+<section class="content-grid two">
+  <article class="panel form-panel">
+    <form method="post" autocomplete="off">
+      {% include 'partials/form.html' %}
+      <button class="button button-primary" type="submit">Verify and save payout details</button>
+    </form>
+  </article>
+  <article class="panel payout-account-summary" aria-labelledby="payout-account-summary-title">
+    <div class="panel-head"><div><div class="eyebrow">Payout details</div><h2 id="payout-account-summary-title">Saved account</h2></div></div>
+    {% if account.account_name %}
+      <div class="detail-list">
+        <div><span>Account Name</span><strong>{{ account.account_name }}</strong></div>
+        <div><span>Bank</span><strong>{{ account.bank_name|default:account.bank_code|default:'—' }}</strong></div>
+        <div><span>Account Number</span><strong>{% if account.account_number_last4 %}•••• {{ account.account_number_last4 }}{% else %}—{% endif %}</strong></div>
+      </div>
+    {% else %}
+      <p>No payout account details have been saved.</p>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

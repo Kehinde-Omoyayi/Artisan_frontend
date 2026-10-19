@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block title %}Services · Artisan Market{% endblock %}
+{% block content %}
+<section class="page-heading services-page-heading">
+  <div class="services-page-intro"><div class="eyebrow">Discover</div><h1>Services</h1><p>Browse the active service catalogue by category.</p></div>
+  <form class="services-filter-form" method="get" role="search" aria-label="Filter services by category">
+    <label class="services-filter-form__field" for="service-category-filter">
+      <span>Service category</span>
+      <select id="service-category-filter" name="category_name" aria-label="Choose a service category">
+        <option value="">All service categories</option>
+        {% for category in categories %}<option value="{{ category.name }}" {% if category.selected %}selected{% endif %}>{{ category.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="button button-primary services-filter-form__submit" type="submit">Filter services</button>
+    {% if selected_category %}<a class="services-filter-form__reset" href="{% url 'services' %}">Clear filter</a>{% endif %}
+  </form>
+</section>
+<section class="card-grid" aria-label="Marketplace services">
+  {% for item in items %}
+    <article class="service-card">
+      <div class="eyebrow">{{ item.category_name|default:'Service' }}</div>
+      <h2>{{ item.name }}</h2>
+      <p>{{ item.description|default:'No description provided.' }}</p>
+      <div class="card-footer">
+        <span class="status-pill {{ item.is_active|yesno:'ok,neutral' }}">{% if item.is_active %}Active{% else %}Inactive{% endif %}</span>
+        <a href="{% url 'artisans' %}?category_name={{ item.category_name|urlencode }}">Find artisans →</a>
+      </div>
+    </article>
+  {% empty %}
+    <div class="empty services-empty-state">
+      {% if selected_category %}No active services matched “{{ selected_category }}”.{% else %}No active services are available right now.{% endif %}
+      {% if selected_category %}<a href="{% url 'services' %}">Show all services</a>{% endif %}
+    </div>
+  {% endfor %}
+</section>
+{% endblock %}

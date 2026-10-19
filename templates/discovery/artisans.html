@@ -1,0 +1,219 @@
+{% extends 'base.html' %}
+{% load static site_tags %}
+{% block title %}Discover artisans · Artisan Market{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">{% endblock %}
+{% block content %}
+<div hidden aria-hidden="true">{% csrf_token %}</div>
+<section class="artisan-discovery-page artisan-motion-page" data-artisan-page="discovery-artisans">
+  <div class="artisan-discovery-category-drawer" data-discovery-category-drawer>
+    <div class="artisan-discovery-category-tools">
+      <button class="artisan-discovery-category-toggle" type="button" data-discovery-sidebar-toggle aria-controls="artisan-discovery-category-panel" aria-expanded="true" data-artisan-action>
+        <span class="artisan-discovery-category-toggle-icon" aria-hidden="true">☷</span>
+        <span>Browse Categories &amp; Services</span>
+        <span class="artisan-discovery-category-toggle-arrow" aria-hidden="true">⌄</span>
+      </button>
+    </div>
+    <section id="artisan-discovery-category-panel" class="panel artisan-discovery-category-panel" aria-label="Browse artisan categories and services" data-discovery-category-panel>
+      <header class="artisan-discovery-category-heading">
+        <div><span class="artisan-panel-kicker">Browse by trade</span><h2>Categories &amp; Services</h2></div>
+        <button class="artisan-discovery-category-close" type="button" data-discovery-category-close aria-label="Close categories and services">×</button>
+      </header>
+      <p class="artisan-discovery-category-intro">Choose a category or service to apply a marketplace filter.</p>
+      <label class="artisan-discovery-category-search" for="discovery-category-search">
+        <span>Find a category</span>
+        <input id="discovery-category-search" type="search" placeholder="Search categories" data-discovery-category-search>
+      </label>
+      <div class="artisan-discovery-category-list" data-discovery-category-list>
+        {% for category in categories %}
+          <details class="artisan-discovery-category" data-discovery-category data-category-name="{{ category.name }}" {% if category.is_open %}open{% endif %}>
+            <summary><span>{{ category.name }}</span></summary>
+            <div class="artisan-discovery-category-links">
+              <a class="artisan-discovery-category-all{% if category.is_active and not params.service_name %} is-active{% endif %}" href="{{ category.all_url }}" data-discovery-category-filter="{{ category.name }}" data-artisan-action>All {{ category.name }} services</a>
+              {% for service in category.services %}
+                <a class="artisan-discovery-service-link{% if service.is_active %} is-active{% endif %}" href="{{ service.url }}" data-discovery-service-filter="{{ service.name }}" data-category-name="{{ category.name }}" {% if service.is_active %}aria-current="true"{% endif %} data-artisan-action>{{ service.name }}</a>
+              {% empty %}
+                <p class="artisan-discovery-no-category-services">No services listed under this category.</p>
+              {% endfor %}
+            </div>
+          </details>
+        {% empty %}
+          <p class="artisan-discovery-category-empty">No categories are currently available in the marketplace catalogue.</p>
+        {% endfor %}
+      </div>
+      <p class="artisan-discovery-category-search-empty" data-discovery-category-empty hidden>No categories match that search.</p>
+    </section>
+  </div>
+
+  <header class="page-heading artisan-discovery-heading" data-artisan-reveal data-motion="up">
+    <div>
+      <div class="eyebrow">Marketplace · Discover</div>
+      <h1 data-text-motion>Find the right artisan</h1>
+      <p>Browse active, verified artisans and review their public profiles and service offerings.</p>
+    </div>
+  </header>
+
+  <form class="artisan-discovery-filter" id="artisan-discovery-filters" data-tour-target="profiles-services" method="get" role="search" aria-label="Filter artisan results" data-discovery-form data-artisan-reveal data-motion="scale">
+    {% if params.category_name %}<input type="hidden" name="category_name" value="{{ params.category_name }}">{% endif %}
+    {% if params.service_name %}<input type="hidden" name="service_name" value="{{ params.service_name }}">{% endif %}
+    <div class="artisan-discovery-search-row">
+      <label class="artisan-discovery-search-field" for="discovery-query">
+        <span>Search artisans, services or locations</span>
+        <input id="discovery-query" name="q" type="search" value="{{ params.q|default:'' }}" placeholder="e.g. plumbing, tailoring, Ikeja">
+      </label>
+      <button class="button button-primary" type="submit" data-artisan-action>Search</button>
+    </div>
+
+    <div class="artisan-discovery-filter-fields">
+      <label><span>Country</span>
+        <select id="discovery-country" name="country" data-discovery-country>
+          <option value="">Any country</option>
+          {% for country in country_options %}<option value="{{ country }}" {% if params.country == country %}selected{% endif %}>{{ country }}</option>{% endfor %}
+        </select>
+      </label>
+      <label><span>State or region</span>
+        <select id="discovery-state" name="state" data-discovery-state>
+          <option value="">Any state or region</option>
+          {% for state in state_options %}<option value="{{ state }}" {% if params.state == state %}selected{% endif %}>{{ state }}</option>{% endfor %}
+        </select>
+      </label>
+      <label><span>Area or locality</span>
+        <select id="discovery-area" name="area" data-discovery-area>
+          <option value="">Any area</option>
+          {% for area in area_options %}<option value="{{ area }}" {% if params.area == area %}selected{% endif %}>{{ area }}</option>{% endfor %}
+        </select>
+      </label>
+      <label><span>Closest institution</span>
+        <select name="institution_id" data-discovery-institution>
+          <option value="">Any institution</option>
+          {% for institution in institutions %}
+            <option value="{{ institution.id }}" data-country="{{ institution.country }}" data-state="{{ institution.state }}" {% if params.institution_id == institution.id %}selected{% endif %}>
+              {{ institution.name }}{% if institution.campus %} — {{ institution.campus }}{% endif %}{% if institution.area %} · {{ institution.area }}{% endif %}{% if institution.state %}, {{ institution.state }}{% endif %}{% if institution.country %}, {{ institution.country }}{% endif %}
+            </option>
+          {% empty %}<option value="" disabled>No institutions listed yet</option>{% endfor %}
+        </select>
+      </label>
+      <label><span>Service availability</span>
+        <select name="available_anywhere" data-discovery-availability>
+          <option value="" {% if not params.available_anywhere %}selected{% endif %}>Any availability</option>
+          <option value="true" {% if params.available_anywhere == 'true' or params.available_anywhere == '1' %}selected{% endif %}>Offers services anywhere</option>
+          <option value="false" {% if params.available_anywhere == 'false' or params.available_anywhere == '0' %}selected{% endif %}>Specific locations only</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="artisan-discovery-filter-actions">
+      <span>Area filters match service coverage. “Based in” is the artisan’s registered location, not a claim of an office in every service area.</span>
+      {% if has_active_filters %}<a class="artisan-discovery-reset" href="{% url 'artisans' %}" data-discovery-clear-all>Clear filters</a>{% endif %}
+    </div>
+  </form>
+
+  {{ locations|json_script:"discovery-location-catalogue" }}
+
+  <section class="artisan-discovery-results" aria-label="Matching artisans">
+    {% if promoted_items %}
+    <section class="artisan-discovery-sponsored" aria-labelledby="artisan-discovery-sponsored-title">
+      <div class="artisan-discovery-sponsored-heading">
+        <div><span class="artisan-panel-kicker">Paid placements · separate from organic results</span><h2 id="artisan-discovery-sponsored-title">Promoted for this search</h2></div>
+        <p>These eligible paid results match your selected service and location filters. Ordinary discovery results follow below.</p>
+      </div>
+      <div class="artisan-discovery-sponsored-grid">
+        {% for artisan in promoted_items %}
+        <article class="panel artisan-discovery-card artisan-discovery-card--sponsored" data-promotion-impression-token="{{ artisan.impression_token }}" data-promotion-campaign-id="{{ artisan.campaign_id }}" data-promotion-artisan-id="{{ artisan.artisan_id }}">
+          <header class="artisan-discovery-card-head">
+            <div class="artisan-discovery-avatar">
+              <span class="artisan-discovery-avatar-fallback" data-profile-photo-fallback {% if artisan.profile_photo_url %}hidden{% endif %} aria-hidden="true">{{ artisan.name|default:'A'|slice:':1'|upper }}</span>
+              {% if artisan.profile_photo_url %}<img class="artisan-discovery-photo" src="{{ artisan.profile_photo_url }}" alt="" data-profile-photo-image loading="lazy" referrerpolicy="no-referrer">{% endif %}
+            </div>
+            <div class="artisan-discovery-identity">
+              <div class="artisan-discovery-card-badges"><span class="artisan-discovery-sponsored-badge">Promoted</span></div>
+              <h2>{{ artisan.business_name|default:artisan.name }}</h2>
+              <p class="artisan-discovery-based-in"><span>Promotion target</span><strong>{{ artisan.target_label }}</strong></p>
+            </div>
+          </header>
+          <div class="artisan-discovery-card-services">
+            <div class="artisan-discovery-card-section-title">Service relevant to this search</div>
+            <ul>
+              {% for service in artisan.services %}
+                <li><div><strong>{{ service.service_name }}</strong><small>{{ service.category_name }}</small></div><span class="artisan-discovery-service-location">{% if service.location %}{{ service.location.area }}{% if service.location.state %}, {{ service.location.state }}{% endif %}{% else %}Anywhere service offer{% endif %}</span></li>
+              {% empty %}<li><div><strong>{{ artisan.main_service|default:'Current service offering' }}</strong><small>Open profile for details.</small></div></li>{% endfor %}
+            </ul>
+          </div>
+          <div class="artisan-discovery-card-summary">
+            {% if artisan.review_count %}<div class="artisan-discovery-rating"><span aria-hidden="true">★</span><strong>{{ artisan.average_rating }}</strong><small>{{ artisan.review_count }} review{{ artisan.review_count|pluralize }}</small></div>{% endif %}
+            {% if artisan.description %}<p class="artisan-discovery-sponsored-description">{{ artisan.description|truncatechars:160 }}</p>{% endif %}
+          </div>
+          <a class="button button-secondary full artisan-discovery-view" href="{{ artisan.artisan_url }}" data-artisan-action>View full artisan details <span aria-hidden="true">↗</span></a>
+          <a class="artisan-discovery-report-promotion" href="{% url 'support-cases' %}?promotion_campaign={{ artisan.campaign_id }}">Report this promoted result</a>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    <div class="artisan-discovery-results-toolbar" data-artisan-reveal data-motion="left">
+      <div>
+        <h2>Artisans to explore</h2>
+        <p role="status" aria-live="polite">Showing {{ first_result }}–{{ last_result }} of {{ total_count }} artisans</p>
+      </div>
+      <div class="artisan-discovery-active-filters" aria-label="Active filters">
+        {% if params.q %}<span class="artisan-discovery-filter-chip">Search: {{ params.q }}</span>{% endif %}
+        {% if params.area %}<span class="artisan-discovery-filter-chip">Area: {{ params.area }}</span>{% endif %}
+        {% if params.state %}<span class="artisan-discovery-filter-chip">State: {{ params.state }}</span>{% endif %}
+        {% if params.country %}<span class="artisan-discovery-filter-chip">Country: {{ params.country }}</span>{% endif %}
+        {% if params.institution_id %}<span class="artisan-discovery-filter-chip">Institution selected</span>{% endif %}
+        {% if params.available_anywhere == 'true' or params.available_anywhere == '1' %}<span class="artisan-discovery-filter-chip">Offers services anywhere</span>{% elif params.available_anywhere == 'false' or params.available_anywhere == '0' %}<span class="artisan-discovery-filter-chip">Specific locations only</span>{% endif %}
+        {% if params.category_name %}<span class="artisan-discovery-filter-chip">{{ params.category_name }}</span>{% endif %}
+        {% if params.service_name %}<span class="artisan-discovery-filter-chip artisan-discovery-filter-chip--active">Service: {{ params.service_name }}</span><a class="artisan-discovery-clear-service" href="{{ clear_service_url }}" data-discovery-clear-service>Clear service</a>{% endif %}
+      </div>
+    </div>
+
+    <div class="artisan-discovery-grid">
+      {% for artisan in items %}
+        <article class="panel artisan-discovery-card" data-discovery-card data-artisan-reveal data-motion="up">
+          <header class="artisan-discovery-card-head">
+            <div class="artisan-discovery-avatar">
+              <span class="artisan-discovery-avatar-fallback" data-profile-photo-fallback {% if artisan.profile_photo %}hidden{% endif %} aria-hidden="true">{{ artisan.name|default:'A'|slice:':1'|upper }}</span>
+              {% if artisan.profile_photo %}<img class="artisan-discovery-photo" src="{{ artisan.profile_photo }}" alt="" data-profile-photo-image loading="lazy" referrerpolicy="no-referrer">{% endif %}
+            </div>
+            <div class="artisan-discovery-identity">
+              <div class="artisan-discovery-card-badges">
+                {% if artisan.verification_status == 'VERIFIED' %}<span class="status-pill {{ artisan.verification_status|status_class }}">Identity verified</span>{% endif %}
+              </div>
+              <h2>{{ artisan.business_name|default:artisan.name }}</h2>
+              <p class="artisan-discovery-based-in"><span>Registered base</span><strong>{% if artisan.area or artisan.state or artisan.country %}{% if artisan.area %}{{ artisan.area }}{% endif %}{% if artisan.state %}{% if artisan.area %}, {% endif %}{{ artisan.state }}{% endif %}{% if artisan.country %}{% if artisan.area or artisan.state %}, {% endif %}{{ artisan.country }}{% endif %}{% else %}Location not listed{% endif %}</strong></p>
+            </div>
+            {% if artisan.years_experience %}<span class="artisan-discovery-experience">{{ artisan.years_experience }}<small>yrs experience</small></span>{% endif %}
+          </header>
+
+          <div class="artisan-discovery-card-services">
+            <div class="artisan-discovery-card-section-title">Services relevant to this search</div>
+            <ul>
+              {% for service in artisan.services %}
+                <li><div><strong>{{ service.service_name }}</strong><small>{{ service.category_name }}</small></div><span class="artisan-discovery-service-location">{% if service.location %}{{ service.location.area }}{% if service.location.state %}, {{ service.location.state }}{% endif %}{% else %}Anywhere service offer{% endif %}</span></li>
+              {% empty %}<li><div><strong>Service details</strong><small>Open the profile to learn more.</small></div></li>{% endfor %}
+            </ul>
+          </div>
+
+          <div class="artisan-discovery-card-summary">
+            {% if artisan.has_rating %}<div class="artisan-discovery-rating"><span aria-hidden="true">★</span><strong>{{ artisan.average_rating }}</strong>{% if artisan.review_count %}<small>{{ artisan.review_count }} review{{ artisan.review_count|pluralize }}</small>{% endif %}</div>{% endif %}
+            <span class="artisan-discovery-availability">{% if artisan.available_anywhere %}Offers services anywhere{% else %}Service-specific locations{% endif %}</span>
+          </div>
+
+          <a class="button button-secondary full artisan-discovery-view" href="{% url 'artisan-detail' pk=artisan.id %}" data-artisan-action>View full artisan details <span aria-hidden="true">↗</span></a>
+        </article>
+      {% empty %}
+        <div class="empty artisan-discovery-empty" data-artisan-reveal data-motion="scale"><strong>No artisans matched these filters.</strong><span>Try a broader search or clear one of the selected filters.</span></div>
+      {% endfor %}
+    </div>
+
+    {% if previous_url or next_url %}
+    <nav class="artisan-discovery-pagination" aria-label="Artisan results pages">
+      {% if previous_url %}<a class="button button-secondary" href="{{ previous_url }}" rel="prev">← Previous</a>{% else %}<span></span>{% endif %}
+      <span>Page {{ current_page }}</span>
+      {% if next_url %}<a class="button button-secondary" href="{{ next_url }}" rel="next">Next →</a>{% else %}<span></span>{% endif %}
+    </nav>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script><script src="{% static 'js/pages/discovery-artisans.js' %}"></script>{% endblock %}

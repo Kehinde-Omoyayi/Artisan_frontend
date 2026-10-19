@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}Leave a review · Artisan Market{% endblock %}
+{% block content %}{% include 'partials/form_page.html' with title='Leave a review' intro='Reviews can only be submitted for your own completed booking. The API enforces that rule.' submit_label='Submit review' cancel_url='/bookings/' %}{% endblock %}

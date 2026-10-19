@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}My services · Artisan Market{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">{% endblock %}
+{% block content %}
+<section class="artisan-motion-page artisan-services-page" data-artisan-page="services">
+  <header class="page-heading artisan-page-heading services-page-heading" data-artisan-reveal data-motion="up">
+    <div><div class="eyebrow">Artisan catalogue</div><h1 data-text-motion>My services</h1><p>Manage your personal service offerings in one place: category, service, location, starting budget and edits.</p></div>
+    <span class="services-heading-count" aria-label="Services in current API response">{{ items|length }}<small>services</small></span>
+  </header>
+
+  <section class="artisan-services-layout">
+    <article class="panel artisan-service-add-panel" id="service-offer-form" data-artisan-reveal data-motion="left">
+      <div class="panel-head">
+        <div><span class="artisan-panel-kicker">{% if editing_item %}Update an offering{% else %}Grow your catalogue{% endif %}</span><h2>{% if editing_item %}Edit service{% else %}Add a service{% endif %}</h2></div>
+        <span class="artisan-panel-mark" aria-hidden="true">{% if editing_item %}✎{% else %}＋{% endif %}</span>
+      </div>
+      <p class="artisan-form-intro">Choose a catalogue service and either Anywhere or a registered marketplace location. Service locations are selected from the existing marketplace catalogue; this form does not create new locations.</p>
+      <form method="post" class="js-submit-form artisan-service-form" data-artisan-form data-service-filter-form>
+        {% include 'partials/form.html' %}
+        {% if editing_item %}<input type="hidden" name="offering_id" value="{{ editing_item.id }}">{% endif %}
+        <div class="artisan-service-form-actions">
+          <button class="button button-primary artisan-form-submit" type="submit" data-artisan-action>{% if editing_item %}Save changes{% else %}Add service{% endif %}</button>
+          {% if editing_item %}<a class="button button-secondary" href="{% url 'artisan-services' %}">Cancel edit</a>{% endif %}
+        </div>
+      </form>
+    </article>
+
+    <article class="panel artisan-services-list-panel" data-artisan-reveal data-motion="right">
+      <div class="panel-head"><div><span class="artisan-panel-kicker">Your personal services</span><h2>Current offerings</h2></div><span class="services-list-count">{{ items|length }}</span></div>
+      <div class="artisan-service-list">
+        {% for item in items %}
+          <article class="artisan-service-record{% if editing_item.id == item.id %} is-editing{% endif %}" data-artisan-reveal data-motion="up">
+            <header class="artisan-service-record-head">
+              <span class="service-list-index">{{ forloop.counter|stringformat:'02d' }}</span>
+              <div class="service-list-copy"><span class="artisan-service-record-category">{{ item.category_name|default:'Service category' }}</span><h3>{{ item.service_name|default:'Service offering' }}</h3></div>
+              <span class="service-list-price">{% if item.starting_price == 0 or item.starting_price %}₦{{ item.starting_price|floatformat:2 }}{% else %}Budget on request{% endif %}</span>
+            </header>
+            <div class="artisan-service-record-facts">
+              <div><span>Service location</span><strong>{% if item.location %}{{ item.location.area|default:'' }}{% if item.location.state %}, {{ item.location.state }}{% endif %}{% if item.location.country %}, {{ item.location.country }}{% endif %}{% else %}Anywhere{% endif %}</strong></div>
+              <div><span>Starting budget</span><strong>{% if item.starting_price == 0 or item.starting_price %}₦{{ item.starting_price|floatformat:2 }}{% else %}On request{% endif %}</strong></div>
+            </div>
+            <div class="artisan-service-record-actions">
+              <a class="button button-secondary" href="{% url 'artisan-services' %}?edit={{ item.id }}#service-offer-form">Edit service</a>
+              <form method="post" class="js-confirm-form" data-confirm="Remove {{ item.service_name|default:'this service' }} from your profile?">
+                {% csrf_token %}
+                <input type="hidden" name="_delete" value="1">
+                <input type="hidden" name="offering_id" value="{{ item.id }}">
+                <button class="button button-danger" type="submit" data-artisan-action>Delete</button>
+              </form>
+            </div>
+          </article>
+        {% empty %}
+          <div class="empty artisan-services-empty" data-artisan-reveal data-motion="scale"><span class="services-empty-mark" aria-hidden="true">✦</span><strong>No artisan services yet.</strong><span>Add a catalogue service and choose Anywhere or a location already in the marketplace.</span></div>
+        {% endfor %}
+      </div>
+    </article>
+  </section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script>{% endblock %}

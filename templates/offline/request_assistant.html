@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Offline Request Draft · Artisan Market{% endblock %}
+{% block body_class %}offline-request-body{% endblock %}
+{% block main_class %}offline-request-main{% endblock %}
+{% block site_header %}
+<header class="offline-request-topbar">
+  <a href="/" aria-label="Artisan Market home"><span aria-hidden="true">AM</span> Artisan Market</a>
+  <span>Offline draft workspace</span>
+</header>
+{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/offline-request-assistant.css' %}">
+{% endblock %}
+{% block content %}
+<div class="offline-request-shell" data-offline-request-root>
+  <section class="offline-request-card">
+    <div class="offline-request-eyebrow">REQUEST BUILDER · LOCAL DRAFT</div>
+    <h1>Keep your request moving offline</h1>
+    <p class="offline-request-lede">Your unfinished fields are saved only in this browser until they sync. This workspace can save a draft to the existing conversation when you reconnect; it never submits or creates a booking.</p>
+    <p class="offline-request-status" data-offline-status role="status" aria-live="polite">Checking this device for a saved draft…</p>
+    <div class="offline-catalog-status" data-offline-catalog-status role="status"></div>
+
+    <form class="offline-request-form" data-offline-assistant novalidate>
+      <div class="offline-grid two">
+        <label>Service category
+          <select name="category_id" data-offline-category>
+            <option value="">Choose a cached category</option>
+          </select>
+        </label>
+        <label>Service
+          <select name="service_id" data-offline-service>
+            <option value="">Choose a cached service</option>
+          </select>
+        </label>
+      </div>
+      <label>What needs to be done?
+        <textarea name="description" rows="4" maxlength="10000" placeholder="Describe the work in your own words"></textarea>
+      </label>
+      <fieldset class="offline-location-fields">
+        <legend>Service location · cached catalogue only</legend>
+        <div class="offline-grid three">
+          <label>Country<select name="country" data-offline-country><option value="">Choose country</option></select></label>
+          <label>State or region<select name="state" data-offline-state><option value="">Choose state or region</option></select></label>
+          <label>Area or locality<select name="area" data-offline-area><option value="">Choose area</option></select></label>
+        </div>
+        <label>Search available locations
+          <input type="search" data-offline-location-search placeholder="Search country, state, or area">
+        </label>
+        <label>Exact catalogue location
+          <select name="location_id" data-offline-location><option value="">Choose an exact location</option></select>
+        </label>
+      </fieldset>
+      <div class="offline-grid three">
+        <label>Preferred date<input type="date" name="preferred_date"></label>
+        <label>Preferred time from<input type="time" name="preferred_time_start"></label>
+        <label>Preferred time until<input type="time" name="preferred_time_end"></label>
+      </div>
+      <label>Time preference note<input type="text" name="preferred_time_note" maxlength="100" placeholder="For example, morning or after work"></label>
+      <label>Urgency<select name="urgency"><option value="LOW">Low</option><option value="NORMAL" selected>Normal</option><option value="HIGH">High</option><option value="EMERGENCY">Emergency</option></select></label>
+      <div class="offline-grid two">
+        <label>Budget (optional)<input type="number" name="budget" min="0" step="0.01" inputmode="decimal" placeholder="Leave blank if open to a quote"></label>
+        <label>Budget preference
+          <select name="budget_unknown"><option value="false">I may add a budget</option><option value="true">Open to quote / not sure</option></select>
+        </label>
+      </div>
+      <label>Additional job-specific information
+        <textarea name="additional_details" rows="3" maxlength="5000" placeholder="Any other details the artisan should review"></textarea>
+      </label>
+      <div class="offline-request-actions">
+        <button type="button" class="offline-secondary-button" data-save-offline>Save on this device</button>
+        <button type="button" class="offline-primary-button" data-sync-offline>Sync draft now</button>
+      </div>
+      <p class="offline-request-note">Syncing saves an editable draft in the conversation. Return to the conversation to review and explicitly submit it. A preferred date is not a confirmed appointment.</p>
+      <a class="offline-return-link" data-offline-return href="{% url 'conversation-inbox' %}">Return to messages</a>
+    </form>
+  </section>
+</div>
+{% endblock %}

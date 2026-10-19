@@ -1,0 +1,593 @@
+{% extends 'base.html' %}
+{% load static site_tags %}
+{% block title %}Request & Chat · Artisan Market{% endblock %}
+{% block body_class %}conversation-shell-body{% endblock %}
+{% block main_class %}conversation-main-shell{% endblock %}
+{% block site_header %}
+<header class="conversation-nav" aria-label="Conversation navigation">
+  <div class="conversation-nav-inner">
+    <a class="conversation-nav-back" href="{% url 'conversation-inbox' %}" aria-label="Back to messages"><span aria-hidden="true">←</span></a>
+    <strong>{% if conversation.conversation_type == 'DIRECT' %}Direct Chat{% else %}Request &amp; Chat{% endif %}</strong>
+    <details class="conversation-more">
+      <summary aria-label="More conversation options">⋮</summary>
+      <div class="conversation-more-menu">
+        <button class="conversation-tour-trigger" type="button" data-onboarding-open aria-haspopup="dialog" aria-controls="site-onboarding-tour">Take a tour</button>
+        <a href="{% url 'home' %}" data-tour-target="discovery">Marketplace home</a>
+        <a href="{% url 'categories' %}" data-tour-target="discovery">Browse categories</a>
+        <a href="{% url 'artisans' %}" data-tour-target="profiles-services">Find artisans</a>
+        {% if conversation.viewer_role == 'customer' %}<a href="{% url 'customer-profile' %}" data-tour-target="account">Customer profile</a>{% elif conversation.viewer_role == 'artisan' %}<a href="{% url 'artisan-profile' %}" data-tour-target="account">Artisan profile</a>{% endif %}
+        <a href="{% url 'conversation-inbox' %}" data-tour-target="transactions">All messages</a>
+        {% if conversation.booking %}<a href="{% url 'booking-detail' pk=conversation.booking.id %}">Booking details</a>{% endif %}
+        {% if conversation.payment %}<a href="{% url 'payment-detail' payment_id=conversation.payment.id %}">Payment details</a>{% endif %}
+        {% if conversation.dispute_case %}<a href="{% url 'support-case-detail' pk=conversation.dispute_case.id %}">Support case</a>{% else %}<a href="{% url 'support-cases' %}?conversation_id={{ conversation.id }}">Get support</a>{% endif %}
+      </div>
+    </details>
+  </div>
+</header>
+{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">
+<link rel="stylesheet" href="{% static 'css/conversations.css' %}">
+{% endblock %}
+{% block content %}
+<section class="artisan-motion-page conversation-page" data-tour-target="transactions" data-artisan-page="conversation" data-viewer-role="{{ conversation.viewer_role }}">
+  <div class="conversation-layout">
+    <div class="conversation-main">
+      <header class="conversation-header" data-artisan-reveal data-motion="left">
+        <div class="participant-avatar" aria-hidden="true">
+          {% if conversation.counterparty.profile_photo %}<img class="participant-avatar-image" src="{{ conversation.counterparty.profile_photo }}" alt="" data-profile-photo-image referrerpolicy="no-referrer"><span class="participant-avatar-fallback" data-profile-photo-fallback hidden>{{ conversation.counterparty.first_name|default:'A'|slice:':1'|upper }}</span>{% else %}<span class="participant-avatar-fallback" data-profile-photo-fallback>{{ conversation.counterparty.first_name|default:'A'|slice:':1'|upper }}</span>{% endif %}
+        </div>
+        <div class="participant-meta">
+          <div class="eyebrow">{% if conversation.conversation_type == 'DIRECT' %}Private conversation{% elif conversation.viewer_role == 'artisan' %}Customer service request{% else %}Selected artisan{% endif %}</div>
+          <h1>{{ conversation.title }}</h1>
+          <p>{% if conversation.counterparty.business_name %}{{ conversation.counterparty.business_name }} · {% endif %}{% if conversation.counterparty.role == 'artisan' %}Artisan{% else %}Customer{% endif %}</p>
+        </div>
+        <span class="status-pill {{ conversation.state|status_class }}">{{ conversation.state|title }}</span>
+        <span class="chat-unread-count" id="chat-unread-count" aria-live="polite">{{ conversation.unread_count }} unread</span>
+      </header>
+
+      {% if conversation.state == 'ACTIVE' and conversation.payment %}
+        <section class="journey-status active" role="status" data-artisan-reveal>
+          <div>
+            <strong>{% if conversation.booking.status == 'COMPLETION_REQUESTED' %}Completion is ready for review{% elif conversation.booking.status == 'ACCEPTED' and conversation.viewer_role == 'artisan' %}Payment secured · ready to start{% elif conversation.booking.status == 'ACCEPTED' %}Payment is secure · waiting for the artisan to start{% else %}Service in progress{% endif %}</strong>
+            <span>₦{{ conversation.payment.total_amount }} · Escrow {{ conversation.payment.status|title|cut:'_' }}{% if conversation.booking.scheduled_start %} · <time class="workflow-local-time" datetime="{{ conversation.booking.scheduled_start }}" data-utc-time="{{ conversation.booking.scheduled_start }}">{{ conversation.booking.scheduled_start }}</time>{% endif %}</span>
+          </div>
+          <span class="journey-status-icon" aria-hidden="true">✓</span>
+        </section>
+      {% elif conversation.payment and conversation.payment.status == 'PAYMENT_PENDING' %}
+        <section class="journey-status waiting" role="status" data-artisan-reveal>
+          <div><strong>{% if conversation.viewer_role == 'artisan' %}Waiting for customer payment{% else %}Secure payment is the next step{% endif %}</strong><span>₦{{ conversation.payment.total_amount }} {% if conversation.viewer_role == 'artisan' %}is awaiting payment through the marketplace escrow.{% else %}is ready to pay into escrow securely.{% endif %}</span></div>
+          {% if 'PAY' in conversation.available_actions %}
+          <form method="post">
+            {% csrf_token %}<input type="hidden" name="action" value="pay">
+            <button class="button button-primary button-small" type="submit" data-artisan-action>Pay securely</button>
+          </form>
+          {% endif %}
+        </section>
+      {% elif conversation.state == 'COMPLETED' %}
+        <section class="journey-status active" role="status" data-artisan-reveal>
+          <div><strong>Service completed</strong><span>Your booking is complete. Leave a review or contact support if anything still needs attention.</span></div>
+          <span class="journey-status-icon" aria-hidden="true">✓</span>
+        </section>
+      {% elif conversation.state == 'DISPUTED' %}
+        <section class="journey-status waiting" role="status" data-artisan-reveal>
+          <div><strong>Support is following up</strong><span>{% if conversation.dispute_case %}Case {{ conversation.dispute_case.reference }} is {{ conversation.dispute_case.status|title|cut:'_' }}.{% else %}Your service issue is with customer care.{% endif %}</span></div>
+          {% if conversation.dispute_case %}<a class="button button-secondary button-small" href="{% url 'support-case-detail' pk=conversation.dispute_case.id %}" data-artisan-action>View case</a>{% endif %}
+        </section>
+      {% elif conversation.state == 'NEGOTIATING' %}
+        <section class="journey-status waiting" role="status" data-artisan-reveal>
+          <div><strong>{% if conversation.viewer_role == 'artisan' %}Offer negotiation{% else %}Review the artisan’s offer{% endif %}</strong><span>{% if conversation.viewer_role == 'artisan' %}Answer the customer’s questions or review their counter offer below.{% else %}Review the scope and price, ask a question, accept, decline or send a counter offer below.{% endif %}</span></div>
+          <span class="journey-status-icon" aria-hidden="true">↔</span>
+        </section>
+      {% endif %}
+
+      <div class="chat-workspace" data-artisan-reveal data-motion="scale">
+        <div class="conversation-scroll-area" id="conversation-scroll-area">
+        {% if conversation.conversation_type == 'SERVICE' and conversation.service_request or conversation.conversation_type == 'SERVICE' and conversation.request_draft %}
+        <details class="workflow-card request-card" data-artisan-reveal data-tour-target="profiles-services">
+          <summary class="request-card-summary">
+            <span><span class="eyebrow">REQUEST DETAILS</span><strong>{% if conversation.service_request %}{{ conversation.service_request.service|default:conversation.service_request.category }}{% else %}{{ conversation.request_draft.service_name|default:'Service request in progress' }}{% endif %}</strong></span>
+            <span class="request-summary-toggle">{% if conversation.service_request %}View summary{% else %}Details being collected{% endif %}</span>
+          </summary>
+          {% if conversation.service_request %}
+          <dl class="summary-grid request-summary-grid">
+            <div><dt>Service</dt><dd>{{ conversation.service_request.service|default:conversation.service_request.category }}</dd></div>
+            <div><dt>Request location</dt><dd>{{ conversation.service_request.location }}</dd></div>
+            <div><dt>Preferred date</dt><dd>{{ conversation.service_request.preferred_date }}</dd></div>
+            {% if conversation.service_request.preferred_time_start or conversation.service_request.preferred_time_end or conversation.service_request.preferred_time_note %}<div><dt>Preferred time</dt><dd>{% if conversation.service_request.preferred_time_start %}{{ conversation.service_request.preferred_time_start|slice:':5' }}{% endif %}{% if conversation.service_request.preferred_time_start and conversation.service_request.preferred_time_end %}–{% endif %}{% if conversation.service_request.preferred_time_end %}{{ conversation.service_request.preferred_time_end|slice:':5' }}{% endif %}{% if conversation.service_request.preferred_time_note %}{% if conversation.service_request.preferred_time_start or conversation.service_request.preferred_time_end %} · {% endif %}{{ conversation.service_request.preferred_time_note }}{% endif %}</dd></div>{% endif %}
+            <div><dt>Budget</dt><dd>{% if conversation.service_request.budget != None %}₦{{ conversation.service_request.budget }}{% else %}Open to quote{% endif %}</dd></div>
+            <div><dt>Category</dt><dd>{{ conversation.service_request.category }}</dd></div>
+            <div><dt>Urgency</dt><dd>{{ conversation.service_request.urgency|title }}</dd></div>
+          </dl>
+          <p class="workflow-scope request-description">{{ conversation.service_request.description }}</p>
+          {% if conversation.service_request.additional_details %}<p class="workflow-scope request-description"><strong>Additional job-specific information:</strong> {{ conversation.service_request.additional_details }}</p>{% endif %}
+          {% if conversation.viewer_role == 'customer' and conversation.service_request.id %}<a class="request-responses-shortcut" href="{% url 'service-request-responders' pk=conversation.service_request.id %}#responders">Review other artisan responses <span aria-hidden="true">→</span></a>{% endif %}
+          {% else %}
+          <dl class="summary-grid request-summary-grid">
+            <div><dt>Service</dt><dd>{% if conversation.request_draft.service_name %}{{ conversation.request_draft.service_name }}{% elif conversation.request_draft.service_id %}Selected{% else %}Still needed{% endif %}</dd></div>
+            <div><dt>Request location</dt><dd>{{ conversation.request_draft.location_label|default:'Still needed' }}</dd></div>
+            <div><dt>Preferred date</dt><dd>{{ conversation.request_draft.preferred_date|default:'Still needed' }}</dd></div>
+            {% if conversation.request_draft.preferred_time_start or conversation.request_draft.preferred_time_end or conversation.request_draft.preferred_time_note %}<div><dt>Preferred time</dt><dd>{% if conversation.request_draft.preferred_time_start %}{{ conversation.request_draft.preferred_time_start|slice:':5' }}{% endif %}{% if conversation.request_draft.preferred_time_start and conversation.request_draft.preferred_time_end %}–{% endif %}{% if conversation.request_draft.preferred_time_end %}{{ conversation.request_draft.preferred_time_end|slice:':5' }}{% endif %}{% if conversation.request_draft.preferred_time_note %} · {{ conversation.request_draft.preferred_time_note }}{% endif %}</dd></div>{% endif %}
+            <div><dt>Budget</dt><dd>{% if conversation.request_draft.budget_unknown %}Open to quote{% elif conversation.request_draft.budget %}₦{{ conversation.request_draft.budget }}{% else %}Optional — not specified{% endif %}</dd></div>
+          </dl>
+          <p class="workflow-scope request-description">{{ conversation.request_draft.description|default:'Tell us what is happening; you can also attach a photo in your next message.' }}</p>
+          {% if conversation.request_draft.additional_details %}<p class="workflow-scope request-description"><strong>Additional details:</strong> {{ conversation.request_draft.additional_details }}</p>{% endif %}
+          {% endif %}
+        </details>
+        {% endif %}
+
+        <div class="chat-stream" id="conversation-stream" role="log" aria-label="Conversation messages" aria-live="off" data-conversation-id="{{ conversation.id }}" data-role="{{ conversation.viewer_role }}" data-viewer-id="{{ conversation.viewer_id|default:'' }}" data-unread-count="{{ conversation.unread_count }}" data-counterparty-avatar="{{ conversation.counterparty.profile_photo|default:'' }}" data-assistant-enabled="{% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request %}true{% else %}false{% endif %}" data-assistant-today="{{ assistant_today }}">
+          {% for item in conversation_messages %}
+          <article class="chat-message {% if item.message_type == 'SYSTEM' %}system{% elif item.sender_id == conversation.viewer_id %}mine{% else %}theirs{% endif %}">
+            {% if item.message_type != 'SYSTEM' and item.sender_id != conversation.viewer_id %}<span class="chat-message-avatar" aria-hidden="true">{% if conversation.counterparty.profile_photo %}<img src="{{ conversation.counterparty.profile_photo }}" alt="" data-profile-photo-image loading="lazy" referrerpolicy="no-referrer"><span data-profile-photo-fallback hidden>{{ item.sender_name|default:conversation.title|slice:':1'|upper }}</span>{% else %}<span data-profile-photo-fallback>{{ item.sender_name|default:conversation.title|slice:':1'|upper }}</span>{% endif %}</span>{% endif %}
+            <div class="chat-bubble">
+              <strong>{% if item.message_type == 'SYSTEM' %}Artisan Market{% elif item.sender_id == conversation.viewer_id %}You{% else %}{{ item.sender_name|default:conversation.title }}{% endif %}</strong>
+              {% if item.body %}<p>{{ item.body }}</p>{% endif %}
+              {% for attachment in item.attachments %}
+                {% if attachment.url %}
+                  {% if attachment.content_type|slice:':6' == 'image/' %}
+                  <a class="chat-attachment-image" href="{{ attachment.url }}" target="_blank" rel="noopener"><img src="{{ attachment.url }}" alt="Shared photo; open full size" loading="lazy"></a>
+                  {% else %}
+                  <a class="chat-attachment-file" href="{{ attachment.url }}" target="_blank" rel="noopener">Attachment · {{ attachment.content_type }}</a>
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              <time datetime="{{ item.created_at }}">{{ item.created_at }}</time>
+            </div>
+          </article>
+          {% empty %}
+          <div class="empty chat-empty-state">No messages yet. Start the conversation naturally — you can write a note or attach a photo.</div>
+          {% endfor %}
+          {% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request and conversation.assistant %}
+          <article class="chat-message request-assistant-message" id="conversation-assistant" data-mode="{{ conversation.assistant.mode|default:'' }}" aria-label="Artisan Market guided request helper">
+            <span class="assistant-chat-avatar" aria-hidden="true">AM</span>
+            <div class="chat-bubble assistant-bubble">
+              <strong>Artisan Market · Guided request helper</strong>
+              <p id="assistant-reply">{{ conversation.assistant.reply }}</p>
+              {% if conversation.assistant.prompt.field %}
+              <div class="assistant-question-wrap" id="assistant-question-wrap">
+                <span>{% if conversation.assistant.prompt.optional %}Optional detail{% else %}Next detail{% endif %}</span>
+                <p id="assistant-question">{{ conversation.assistant.prompt.text }}</p>
+              </div>
+              {% endif %}
+              <p class="assistant-schedule-summary" id="assistant-schedule-summary" hidden></p>
+              <div class="assistant-controls" id="assistant-controls"></div>
+              {% if conversation.assistant.suggestions %}
+              <div class="chat-suggestions" id="chat-suggestions" aria-label="Optional quick replies">
+                {% for suggestion in conversation.assistant.suggestions %}<button type="button" class="suggestion" data-suggestion="{{ suggestion }}">{{ suggestion }}</button>{% endfor %}
+              </div>
+              {% endif %}
+            </div>
+          </article>
+          {% endif %}
+        </div>
+
+        {% if conversation.assistant and conversation.viewer_role == 'artisan' or conversation.assistant and conversation.service_request or conversation.assistant and conversation.conversation_type == 'DIRECT' %}
+        <section class="assistant-guidance" id="conversation-assistant" data-mode="{{ conversation.assistant.mode|default:'' }}" data-artisan-reveal>
+          <div class="assistant-mark" aria-hidden="true">AM</div>
+          <div class="assistant-guidance-copy">
+            <strong>{% if conversation.conversation_type == 'DIRECT' %}Artisan Market · Conversation assistant{% elif conversation.viewer_role == 'artisan' %}Artisan Market · Customer request assistant{% else %}Artisan Market · Request helper{% endif %}</strong>
+            <p id="assistant-reply">{{ conversation.assistant.reply }}</p>
+            {% if conversation.assistant.prompt.field %}
+            <div class="assistant-question-wrap" id="assistant-question-wrap">
+              <span>{% if conversation.assistant.prompt.optional %}Optional detail{% else %}Next detail{% endif %}</span>
+              <p id="assistant-question">{{ conversation.assistant.prompt.text }}</p>
+            </div>
+            {% endif %}
+          </div>
+        </section>
+        {% endif %}
+
+        {% if conversation.conversation_type == 'SERVICE' and conversation.assistant.suggestions and conversation.viewer_role == 'artisan' or conversation.conversation_type == 'SERVICE' and conversation.assistant.suggestions and conversation.service_request %}
+        <div class="chat-suggestions" id="chat-suggestions" aria-label="Quick replies">
+          {% for suggestion in conversation.assistant.suggestions %}<button type="button" class="suggestion" data-suggestion="{{ suggestion }}">{{ suggestion }}</button>{% endfor %}
+        </div>
+        {% endif %}
+
+        {% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request %}
+        <details class="request-assistant-card" id="request-assistant-card" data-request-assistant-card data-artisan-reveal>
+          <summary class="request-assistant-head request-assistant-summary">
+            <span><span class="eyebrow">REQUEST DETAILS · DRAFT ONLY</span><strong>Review or edit your request</strong></span>
+            <span class="request-summary-toggle">Open details</span>
+          </summary>
+          <div class="request-assistant-content">
+          <p class="request-assistant-intro">This guided helper uses your messages and the marketplace catalogue—not a live AI service. You can type naturally, then review or change the draft here. A preferred date or time is not a confirmed booking.</p>
+          <p class="request-assistant-offline"><a class="request-offline-link" href="{% url 'offline-request-assistant' %}?conversation_id={{ conversation.id }}">Open offline draft workspace</a></p>
+          {{ conversation.assistant|json_script:'request-assistant-options' }}
+          <form method="post" id="request-assistant-form" class="request-assistant-form" data-request-assistant data-conversation-id="{{ conversation.id }}" data-viewer-id="{{ conversation.viewer_id|default:'' }}" data-server-draft="{% if conversation.request_draft %}true{% else %}false{% endif %}">
+            {% csrf_token %}
+            <div class="form-grid two">
+              <label>Service category
+                <select class="field-input" id="request-category" name="category_id" data-request-category>
+                  <option value="">Choose a category</option>
+                  {% for category in conversation.assistant.request_options.categories %}
+                  <option value="{{ category.id }}"{% if conversation.request_draft.category_id == category.id %} selected{% endif %}>{{ category.name }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>Service
+                <select class="field-input" id="request-service" name="service_id" data-request-service required>
+                  <option value="">Choose a service from this artisan’s catalogue</option>
+                  {% for category in conversation.assistant.request_options.categories %}
+                    <optgroup label="{{ category.name }}" data-category-id="{{ category.id }}">
+                    {% for service in category.services %}
+                    <option value="{{ service.id }}" data-category-id="{{ category.id }}"{% if conversation.request_draft.service_id == service.id %} selected{% endif %}>{{ service.name }}</option>
+                    {% endfor %}
+                    </optgroup>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <div class="request-field-error" data-request-field-error="category_id" aria-live="polite"></div>
+            <div class="request-field-error" data-request-field-error="service_id" aria-live="polite"></div>
+
+            <label for="request-description">What needs to be done?</label>
+            <textarea class="field-input" id="request-description" name="description" rows="4" maxlength="10000" required placeholder="Describe the problem or work in your own words">{{ conversation.request_draft.description|default:'' }}</textarea>
+            <div class="request-field-error" data-request-field-error="description" aria-live="polite"></div>
+
+            <fieldset class="request-location-fields">
+              <legend>Service location</legend>
+              <div class="form-grid three">
+                <label>Country
+                  <input class="field-input" name="country" autocomplete="country-name" data-geography-country="request-location" value="{{ conversation.request_draft.country|default:'' }}" placeholder="Choose a country">
+                </label>
+                <label>State or region
+                  <input class="field-input" name="state" autocomplete="address-level1" data-geography-state="request-location" value="{{ conversation.request_draft.state|default:'' }}" placeholder="Choose a state or region">
+                </label>
+                <label>Area or locality
+                  <input class="field-input" name="area" data-location-area-filter value="{{ conversation.request_draft.area|default:'' }}" placeholder="Choose an area">
+                </label>
+              </div>
+              <label>Search available locations
+                <input class="field-input" type="search" data-location-search placeholder="Search country, state, or area">
+              </label>
+              <label>Choose the exact catalogue location
+                <select class="field-input" name="location_id" id="request-location" data-location-select required>
+                  <option value="">Choose a location from the marketplace catalogue</option>
+                  {% for location in conversation.assistant.request_options.locations %}
+                  <option value="{{ location.id }}" data-country="{{ location.country }}" data-state="{{ location.state }}" data-area="{{ location.area }}" data-service-ids="{{ location.service_ids|join:',' }}"{% if conversation.request_draft.location_id == location.id %} selected{% endif %}>{{ location.area }}, {{ location.state }}, {{ location.country }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div class="request-field-error" data-request-field-error="location_id" aria-live="polite"></div>
+            </fieldset>
+
+            <div class="form-grid three">
+              <label>Preferred date
+                <input class="field-input" type="date" name="preferred_date" min="{{ assistant_today }}" value="{{ conversation.request_draft.preferred_date|default:'' }}" required>
+              </label>
+              <label>Preferred time from (optional)
+                <input class="field-input" type="time" name="preferred_time_start" value="{{ conversation.request_draft.preferred_time_start|slice:':5' }}">
+              </label>
+              <label>Preferred time until (optional)
+                <input class="field-input" type="time" name="preferred_time_end" value="{{ conversation.request_draft.preferred_time_end|slice:':5' }}">
+              </label>
+            </div>
+            <div class="request-field-error" data-request-field-error="preferred_date" aria-live="polite"></div>
+            <div class="request-field-error" data-request-field-error="preferred_time_start" aria-live="polite"></div>
+            <div class="request-field-error" data-request-field-error="preferred_time_end" aria-live="polite"></div>
+            <label>Time preference note (optional)
+              <input class="field-input" type="text" name="preferred_time_note" maxlength="100" value="{{ conversation.request_draft.preferred_time_note|default:'' }}" placeholder="For example, morning or after work">
+            </label>
+            <label>Urgency
+              <select class="field-input" name="urgency">
+                <option value="LOW"{% if conversation.request_draft.urgency == 'LOW' %} selected{% endif %}>Low</option>
+                <option value="NORMAL"{% if conversation.request_draft.urgency == 'NORMAL' or not conversation.request_draft.urgency %} selected{% endif %}>Normal</option>
+                <option value="HIGH"{% if conversation.request_draft.urgency == 'HIGH' %} selected{% endif %}>High</option>
+                <option value="EMERGENCY"{% if conversation.request_draft.urgency == 'EMERGENCY' %} selected{% endif %}>Emergency</option>
+              </select>
+            </label>
+            <div class="form-grid two">
+              <label>Budget (optional)
+                <input class="field-input" type="number" name="budget" min="0" step="0.01" inputmode="decimal" value="{{ conversation.request_draft.budget|default:'' }}" placeholder="Leave blank if open to a quote">
+              </label>
+              <label>Budget preference
+                <select class="field-input" name="budget_unknown" data-budget-unknown>
+                  <option value="false"{% if not conversation.request_draft.budget_unknown %} selected{% endif %}>I may add a budget</option>
+                  <option value="true"{% if conversation.request_draft.budget_unknown %} selected{% endif %}>Open to quote / not sure</option>
+                </select>
+              </label>
+            </div>
+            <label>Additional job-specific information (optional)
+              <textarea class="field-input" name="additional_details" rows="3" maxlength="5000" placeholder="Any measurements, access notes, or other details the artisan should review">{{ conversation.request_draft.additional_details|default:'' }}</textarea>
+            </label>
+
+            <p class="request-photo-hint">Have a photo of the issue? Attach it in the message composer below. Preview it and remove it before sending if needed.</p>
+            <button class="button button-secondary button-small" type="button" data-focus-attachments>Attach a job photo in the conversation</button>
+
+            <details class="request-review-panel" data-request-review hidden>
+              <summary>Review your request before submission</summary>
+              <dl class="request-review-summary">
+                <div><dt>Category</dt><dd data-review-category></dd></div>
+                <div><dt>Service</dt><dd data-review-service></dd></div>
+                <div><dt>Work description</dt><dd data-review-description></dd></div>
+                <div><dt>Location</dt><dd data-review-location></dd></div>
+                <div><dt>Preferred date</dt><dd data-review-date></dd></div>
+                <div><dt>Preferred time</dt><dd data-review-time></dd></div>
+                <div><dt>Urgency</dt><dd data-review-urgency></dd></div>
+                <div><dt>Budget</dt><dd data-review-budget></dd></div>
+                <div><dt>Additional details</dt><dd data-review-additional></dd></div>
+              </dl>
+              <p>Submitting creates the existing marketplace service request. It does not create a booking or confirm an appointment.</p>
+            </details>
+            <div class="request-assistant-actions">
+              <button class="button button-secondary" type="submit" name="action" value="request_draft" formnovalidate data-request-save-draft>Save draft</button>
+              <button class="button button-secondary" type="button" data-request-review-button>Review before submitting</button>
+              <button class="button button-primary" type="submit" name="action" value="request_submit" data-request-submit>Submit request</button>
+            </div>
+            <p class="request-submit-status" data-request-submit-status role="status" aria-live="polite"></p>
+          </form>
+          </div>
+        </details>
+        <p class="request-assistant-save-status" data-request-save-status role="status" aria-live="polite">Draft only. Nothing is submitted until you review and choose Submit request; sync status will appear here.</p>
+        {% endif %}
+
+        {% if 'SEND_OFFER' in conversation.available_actions %}
+        <details class="workflow-card details-card offer-create-card" data-artisan-reveal>
+          <summary>Prepare a service offer <span>Labour · materials · schedule · scope</span></summary>
+          <form method="post" class="workflow-form">
+            {% csrf_token %}<input type="hidden" name="action" value="offer">
+            <div class="form-grid three">
+              <label>Labour (₦)<input class="field-input" name="labour_amount" inputmode="decimal" data-money-input placeholder="25000" required></label>
+              <label>Materials (₦)<input class="field-input" name="materials_amount" inputmode="decimal" data-money-input placeholder="8000" required></label>
+              <label>Total (₦)<input class="field-input" name="total_amount" inputmode="decimal" data-money-total placeholder="33000" required></label>
+            </div>
+            <label class="check-row"><input type="hidden" name="materials_included" value="false"><input type="checkbox" name="materials_included" value="true"> Materials are included in this price</label>
+            <div class="form-grid two">
+              <label>Scheduled start<input class="field-input" type="datetime-local" name="scheduled_start" required></label>
+              <label>Scheduled end<input class="field-input" type="datetime-local" name="scheduled_end" required></label>
+            </div>
+            <label>Offer expires<input class="field-input" type="datetime-local" name="expires_at" required></label>
+            <label>Scope<textarea class="field-input" name="scope" rows="3" maxlength="5000" placeholder="Describe the work included in this offer." required></textarea></label>
+            <label>Notes<textarea class="field-input" name="notes" rows="2" maxlength="3000" placeholder="Materials, access notes, assumptions, or exclusions."></textarea></label>
+            <button class="button button-primary" type="submit" data-artisan-action>Send offer</button>
+          </form>
+        </details>
+        {% endif %}
+
+        {% if conversation.active_offer %}
+        <section class="workflow-card offer-card" data-artisan-reveal>
+          <div class="workflow-card-head">
+            <div><span class="eyebrow">{% if conversation.active_offer.creator_id == conversation.viewer_id %}YOUR OFFER{% else %}OFFER FROM {{ conversation.title|upper }}{% endif %}</span><h2>₦{{ conversation.active_offer.total_amount }}</h2></div>
+            <span class="valid-pill">Valid until <time class="workflow-local-time" datetime="{{ conversation.active_offer.expires_at }}" data-utc-time="{{ conversation.active_offer.expires_at }}">{{ conversation.active_offer.expires_at }}</time></span>
+          </div>
+          <p class="workflow-scope">{{ conversation.active_offer.scope }}</p>
+          <div class="money-grid"><div><span>Labour</span><strong>₦{{ conversation.active_offer.labour_amount }}</strong></div><div><span>Materials</span><strong>₦{{ conversation.active_offer.materials_amount }}</strong></div><div><span>Materials included</span><strong>{% if conversation.active_offer.materials_included %}Yes{% else %}No{% endif %}</strong></div></div>
+          {% if conversation.active_offer.notes %}<p class="muted">{{ conversation.active_offer.notes }}</p>{% endif %}
+          <div class="offer-actions">
+            {% if 'ACCEPT_OFFER' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="accept"><input type="hidden" name="offer_id" value="{{ conversation.active_offer.id }}"><button class="button button-primary" type="submit" data-artisan-action>Accept ₦{{ conversation.active_offer.total_amount }}</button></form>{% endif %}
+            {% if 'DECLINE_OFFER' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="decline"><input type="hidden" name="offer_id" value="{{ conversation.active_offer.id }}"><button class="button button-secondary" type="submit" data-artisan-action>Decline offer</button></form>{% endif %}
+          </div>
+        </section>
+        {% endif %}
+
+        {% if 'COUNTER_OFFER' in conversation.available_actions and conversation.active_offer %}
+        <details class="workflow-card details-card counter-offer-card" data-artisan-reveal>
+          <summary>Make a counter offer</summary>
+          <form method="post" class="workflow-form">
+            {% csrf_token %}<input type="hidden" name="action" value="counter"><input type="hidden" name="parent_offer_id" value="{{ conversation.active_offer.id }}">
+            <div class="form-grid three"><label>Labour (₦)<input class="field-input" name="labour_amount" value="{{ conversation.active_offer.labour_amount }}" data-money-input required></label><label>Materials (₦)<input class="field-input" name="materials_amount" value="{{ conversation.active_offer.materials_amount }}" data-money-input required></label><label>Total (₦)<input class="field-input" name="total_amount" value="{{ conversation.active_offer.total_amount }}" data-money-total required></label></div>
+            <div class="form-grid two"><label>Scheduled start<input class="field-input" type="datetime-local" name="scheduled_start" value="{{ conversation.active_offer.scheduled_start_local }}" data-utc-value="{{ conversation.active_offer.scheduled_start }}" required></label><label>Scheduled end<input class="field-input" type="datetime-local" name="scheduled_end" value="{{ conversation.active_offer.scheduled_end_local }}" data-utc-value="{{ conversation.active_offer.scheduled_end }}" required></label></div>
+            <label>Offer expires<input class="field-input" type="datetime-local" name="expires_at" value="{{ conversation.active_offer.expires_at_local }}" data-utc-value="{{ conversation.active_offer.expires_at }}" required></label>
+            <label>Scope<textarea class="field-input" name="scope" rows="3" maxlength="5000" required>{{ conversation.active_offer.scope }}</textarea></label>
+            <label>Notes<textarea class="field-input" name="notes" rows="2" maxlength="3000">{{ conversation.active_offer.notes }}</textarea></label>
+            <button class="button button-primary" type="submit" data-artisan-action>Send counter offer</button>
+          </form>
+        </details>
+        {% endif %}
+
+        {% if offer_history %}
+        <details class="workflow-card offer-history-card" data-artisan-reveal>
+          <summary>Offer activity <span>{{ offer_history|length }} updates</span></summary>
+          <ol class="offer-history-list">
+            {% for item in offer_history %}
+              {% if not conversation.active_offer or item.id != conversation.active_offer.id %}
+              <li class="offer-history-item">
+                <div class="offer-history-head"><span>{% if item.creator_id == conversation.viewer_id %}You{% else %}{{ conversation.title }}{% endif %}{% if item.parent_offer_id %} · Counter offer{% else %} · Offer{% endif %}</span><strong>₦{{ item.total_amount }}</strong></div>
+                <p>{{ item.scope }}</p>
+                <small>{{ item.status|title|cut:'_' }} · {{ item.created_at }}</small>
+              </li>
+              {% endif %}
+            {% endfor %}
+          </ol>
+        </details>
+        {% endif %}
+
+        {% if conversation.booking %}
+        <section class="workflow-card booking-card" data-artisan-reveal>
+          <div class="workflow-card-head"><div><span class="eyebrow">SERVICE BOOKING</span><h2>{{ conversation.booking.status|title|cut:'_' }}</h2></div><span class="status-pill {{ conversation.booking.status|status_class }}">{{ conversation.booking.status|title|cut:'_' }}</span></div>
+          <p class="booking-reference">Booking reference <code>{{ conversation.booking.id }}</code></p>
+          <div class="money-grid"><div><span>Agreed price</span><strong>₦{{ conversation.booking.price_agreed }}</strong></div><div><span>Start</span><strong><time class="workflow-local-time" datetime="{{ conversation.booking.scheduled_start }}" data-utc-time="{{ conversation.booking.scheduled_start }}">{{ conversation.booking.scheduled_start }}</time></strong></div><div><span>End</span><strong><time class="workflow-local-time" datetime="{{ conversation.booking.scheduled_end }}" data-utc-time="{{ conversation.booking.scheduled_end }}">{{ conversation.booking.scheduled_end }}</time></strong></div></div>
+          {% if conversation.payment %}<div class="escrow-strip"><div><strong>Escrow · {{ conversation.payment.status|title|cut:'_' }}</strong>{% if conversation.payment.verified_at %}<small>Provider verified · <time class="workflow-local-time" datetime="{{ conversation.payment.verified_at }}" data-utc-time="{{ conversation.payment.verified_at }}">{{ conversation.payment.verified_at }}</time></small>{% elif conversation.payment.status == 'PAYMENT_PENDING' %}<small>Awaiting trusted provider confirmation</small>{% endif %}</div><span>₦{{ conversation.payment.total_amount }}</span></div>{% endif %}
+          <div class="workflow-actions">
+            {% if 'START_BOOKING' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="start_booking"><button class="button button-primary" type="submit" data-artisan-action>Start service</button></form>{% endif %}
+            {% if 'SUBMIT_COMPLETION' in conversation.available_actions %}<details class="inline-details"><summary>Mark service complete</summary><form method="post" class="workflow-form">{% csrf_token %}<input type="hidden" name="action" value="complete"><label>Completion note<textarea class="field-input" name="note" rows="2" maxlength="1000"></textarea></label><button class="button button-primary" type="submit" data-artisan-action>Submit completion</button></form></details>{% endif %}
+            {% if 'CONFIRM_COMPLETION' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="confirm_completion"><button class="button button-success" type="submit" data-artisan-action>Confirm completion</button></form>{% endif %}
+            {% if 'REVIEW' in conversation.available_actions %}<a class="button button-primary" href="{% url 'review-create' %}?booking={{ conversation.booking.id }}" data-artisan-action>Review service</a>{% endif %}
+            {% if conversation.booking %}<a class="workflow-text-link" href="{% url 'booking-detail' pk=conversation.booking.id %}">Booking details</a>{% endif %}
+            {% if conversation.payment %}<a class="workflow-text-link" href="{% url 'payment-detail' payment_id=conversation.payment.id %}">Payment details</a>{% endif %}
+          </div>
+        </section>
+        {% endif %}
+
+        {% if conversation.booking and conversation.booking.status == 'IN_PROGRESS' and conversation.viewer_role == 'artisan' and conversation.payment and conversation.payment.status == 'HELD' %}
+        <details class="workflow-card details-card additional-order-create-card" data-artisan-reveal>
+          <summary>Propose separate add-on work <span>Does not change the original booking price or scope</span></summary>
+          <form method="post" class="workflow-form">
+            {% csrf_token %}<input type="hidden" name="action" value="additional_order_propose">
+            <label>Separate add-on amount (₦)<input class="field-input" name="amount" inputmode="numeric" pattern="[0-9]+" placeholder="12000" required></label>
+            <label>New work scope<textarea class="field-input" name="description" rows="3" maxlength="3000" placeholder="Describe only the extra work being proposed." required></textarea></label>
+            <p class="muted">This creates an independent order linked to the active booking. The customer can accept, decline, or counter it.</p>
+            <button class="button button-primary" type="submit" data-artisan-action>Send separate add-on proposal</button>
+          </form>
+        </details>
+        {% endif %}
+
+        {% for addon in conversation.additional_orders %}
+        <section class="workflow-card additional-order-card" data-artisan-reveal aria-labelledby="additional-order-title-{{ forloop.counter }}">
+          <div class="workflow-card-head">
+            <div><span class="eyebrow">SEPARATE ADD-ON ORDER {{ forloop.counter }}</span><h2 id="additional-order-title-{{ forloop.counter }}">{{ addon.status|title|cut:'_' }}</h2></div>
+            <span class="status-pill {% if addon.status == 'APPROVED' %}ok{% elif addon.status == 'DECLINED' %}bad{% else %}warn{% endif %}">{{ addon.status|title|cut:'_' }}</span>
+          </div>
+          <p class="addon-parent-note">Linked to booking <strong>· Original price stays ₦{{ conversation.booking.price_agreed }}</strong></p>
+
+          {% if addon.current_offer %}
+          <article class="addon-current-offer">
+            <div class="addon-offer-heading"><span>{% if addon.current_offer.created_by_id == conversation.viewer_id %}Your proposal{% else %}Proposal from {{ conversation.title }}{% endif %} · revision {{ addon.current_offer.revision }}</span><strong>₦{{ addon.current_offer.amount }}</strong></div>
+            <p>{{ addon.current_offer.description }}</p>
+            <small>{{ addon.current_offer.status|title|cut:'_' }} · {{ addon.current_offer.created_at }}</small>
+          </article>
+          {% endif %}
+
+          {% if addon.status == 'NEGOTIATING' and addon.current_offer.status == 'PROPOSED' and addon.current_offer.created_by_id != conversation.viewer_id %}
+          <div class="addon-response-actions">
+            <form method="post">{% csrf_token %}<input type="hidden" name="action" value="additional_order_respond"><input type="hidden" name="order_id" value="{{ addon.id }}"><input type="hidden" name="offer_id" value="{{ addon.current_offer.id }}"><input type="hidden" name="response_action" value="accept"><button class="button button-primary button-small" type="submit" data-artisan-action>Accept ₦{{ addon.current_offer.amount }}</button></form>
+            <form method="post">{% csrf_token %}<input type="hidden" name="action" value="additional_order_respond"><input type="hidden" name="order_id" value="{{ addon.id }}"><input type="hidden" name="offer_id" value="{{ addon.current_offer.id }}"><input type="hidden" name="response_action" value="decline"><button class="button button-secondary button-small" type="submit" data-artisan-action>Decline add-on</button></form>
+            <details class="inline-details addon-counter-details">
+              <summary>Counter offer</summary>
+              <form method="post" class="workflow-form">{% csrf_token %}<input type="hidden" name="action" value="additional_order_respond"><input type="hidden" name="order_id" value="{{ addon.id }}"><input type="hidden" name="offer_id" value="{{ addon.current_offer.id }}"><input type="hidden" name="response_action" value="counter">
+                <label>Counter amount (₦)<input class="field-input" name="amount" inputmode="numeric" pattern="[0-9]+" required></label>
+                <label>Counter scope<textarea class="field-input" name="description" rows="3" maxlength="3000" required></textarea></label>
+                <button class="button button-primary button-small" type="submit" data-artisan-action>Send counter</button>
+              </form>
+            </details>
+          </div>
+          {% elif addon.status == 'NEGOTIATING' %}
+          <p class="addon-waiting-note" role="status">Waiting for the other participant to respond. This add-on is still separate from the original booking.</p>
+          {% endif %}
+
+          {% if addon.status == 'APPROVED' %}
+          <div class="addon-payment-panel">
+            <div class="addon-payment-copy">
+              <strong>Independent escrow payment</strong>
+              {% if addon.payment %}
+                <span>₦{{ addon.payment.total_amount }} total · {{ addon.payment.status|title|cut:'_' }}</span>
+                {% if addon.payment.status == 'PAYMENT_PENDING' %}<small>Payment is being prepared or verified. It is not considered paid until the provider confirms escrow.</small>{% elif addon.payment.status == 'HELD' %}<small>Provider-confirmed and held in escrow; this add-on is funded.</small>{% elif addon.payment.status == 'FAILED' %}<small>Payment was not confirmed. A new provider payment can be prepared.</small>{% endif %}
+              {% else %}
+                <span>₦{{ addon.current_offer.amount }} add-on amount · escrow fee is shown at checkout</span>
+                <small>Service completion remains blocked until this approved add-on payment is confirmed in escrow.</small>
+              {% endif %}
+            </div>
+            {% if addon.can_pay %}
+            <form method="post">{% csrf_token %}<input type="hidden" name="action" value="additional_order_pay"><input type="hidden" name="order_id" value="{{ addon.id }}"><button class="button button-primary button-small" type="submit" data-artisan-action>{% if addon.payment.status == 'FAILED' %}Retry secure payment{% else %}Pay through escrow{% endif %}</button></form>
+            {% endif %}
+            {% if addon.payment %}<a class="workflow-text-link" href="{% url 'payment-detail' payment_id=addon.payment.id %}">Payment details</a>{% endif %}
+          </div>
+          {% elif addon.status == 'DECLINED' %}
+          <p class="addon-declined-note">No separate payment was collected for this declined add-on.</p>
+          {% endif %}
+
+          {% if addon.offers|length > 1 %}
+          <details class="addon-history">
+            <summary>Negotiation history · {{ addon.offers|length }} entries</summary>
+            <ol>
+              {% for offer in addon.offers %}
+              <li><div><strong>Revision {{ offer.revision }} · {{ offer.status|title|cut:'_' }}</strong><span>₦{{ offer.amount }} · {{ offer.created_at }}</span></div><p>{{ offer.description }}</p></li>
+              {% endfor %}
+            </ol>
+          </details>
+          {% endif %}
+        </section>
+        {% endfor %}
+
+        {% if conversation.dispute_case %}
+        <section class="workflow-card support-case-card" data-artisan-reveal>
+          <div class="workflow-card-head"><div><span class="eyebrow">SUPPORT CASE</span><h2>{{ conversation.dispute_case.reference }}</h2></div><span class="status-pill {{ conversation.dispute_case.status|status_class }}">{{ conversation.dispute_case.status|title|cut:'_' }}</span></div>
+          <p class="workflow-scope">{{ conversation.dispute_case.subject }}</p>
+          <a class="button button-primary" href="{% url 'support-case-detail' pk=conversation.dispute_case.id %}" data-artisan-action>View case and follow up</a>
+        </section>
+        {% endif %}
+
+        {% if 'DISPUTE' in conversation.available_actions or 'CANCEL' in conversation.available_actions or conversation.booking %}
+        <details class="workflow-card support-card" data-artisan-reveal>
+          <summary>More options · Payment & support</summary>
+          <div class="support-options">
+            {% if conversation.booking %}<a href="{% url 'booking-detail' pk=conversation.booking.id %}">View booking details</a>{% endif %}
+            {% if conversation.payment %}<a href="{% url 'payment-detail' payment_id=conversation.payment.id %}">View payment details</a>{% endif %}
+            {% if conversation.dispute_case %}<a href="{% url 'support-case-detail' pk=conversation.dispute_case.id %}">View case {{ conversation.dispute_case.reference }}</a>{% endif %}
+            {% if 'DISPUTE' in conversation.available_actions %}
+            <form method="post" class="workflow-form"><input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"><input type="hidden" name="action" value="dispute"><input type="hidden" name="support_message_key" value="{{ dispute_message_key }}"><label>Message to customer support<textarea class="field-input" name="reason" rows="3" maxlength="1000" placeholder="Tell support what went wrong and what you need reviewed." required></textarea></label><button class="button button-danger" type="submit" data-artisan-action>Send message &amp; open dispute</button></form>
+            {% endif %}
+            {% if 'CANCEL' in conversation.available_actions %}
+            <form method="post" class="workflow-form"><input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="reason_code" value="OTHER"><label>Cancellation reason<textarea class="field-input" name="reason" rows="2" maxlength="1000" placeholder="Why do you need to cancel?"></textarea></label><button class="button button-secondary" type="submit" data-artisan-action>Cancel service</button></form>
+            {% endif %}
+          </div>
+        </details>
+        {% endif %}
+
+        </div>
+
+        <div class="chat-composer" data-artisan-reveal>
+          <form method="post" enctype="multipart/form-data" id="conversation-message-form">
+            {% csrf_token %}<input type="hidden" name="action" value="message">
+            <div class="chat-compose-row">
+              <label class="attachment-picker" for="conversation-attachments" aria-label="Attach photos or files">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 12.5 14.8 6a3.5 3.5 0 0 1 5 5l-8.5 8.5a5 5 0 0 1-7.1-7.1l8.2-8.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>
+                <span class="visually-hidden">Attach photos or files</span>
+                <input id="conversation-attachments" type="file" name="attachments" accept="image/*,.pdf" multiple hidden>
+              </label>
+              <label class="visually-hidden" for="conversation-message-body">Message</label>
+              <textarea class="field-input" id="conversation-message-body" name="body" rows="1" maxlength="5000" placeholder="Type your message…"></textarea>
+              <button class="button button-primary chat-send-button" type="submit" aria-label="Send message" data-artisan-action>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 12 15-7-4.8 14-2.4-5.2L4 12Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/><path d="m11.8 13.8 7.2-8.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>
+              </button>
+            </div>
+            <div class="attachment-preview" id="attachment-preview" aria-live="polite" hidden></div>
+            <p class="chat-status" id="chat-status" aria-live="polite">Messages and attachments are sent securely through the marketplace.</p>
+          </form>
+        </div>
+
+      </div>
+
+      {% if conversation.conversation_type == 'SERVICE' and conversation.journey %}
+      <section class="workflow-card journey-card" aria-labelledby="service-workflow-heading" data-artisan-reveal>
+        <div class="workflow-card-head"><div><span class="eyebrow">SERVICE WORKFLOW</span><h2 id="service-workflow-heading">Current progress</h2></div><span class="workflow-state-pill">{{ conversation.state|title|cut:'_' }}</span></div>
+        <ol class="journey-list">
+          {% for step in conversation.journey %}
+          <li class="journey-item{% if step.complete %} done{% endif %}{% if step.current %} current{% endif %}{% if step.optional %} optional{% endif %}" {% if step.current %}aria-current="step"{% endif %}>
+            <span class="journey-dot" aria-hidden="true">{% if step.complete %}✓{% else %}{{ forloop.counter }}{% endif %}</span>
+            <div><strong>{{ step.title }}</strong><small>{{ step.description }}</small></div>
+          </li>
+          {% endfor %}
+        </ol>
+      </section>
+      {% endif %}
+    </div>
+
+    <aside class="conversation-side" aria-label="Conversation details">
+      {% if conversation.conversation_type == 'SERVICE' and conversation.service_request or conversation.conversation_type == 'SERVICE' and conversation.request_draft %}
+      <section class="side-card request-summary-side" data-artisan-reveal data-motion="right">
+        <div class="side-card-head"><span class="eyebrow">{% if conversation.viewer_role == 'artisan' %}CUSTOMER REQUEST{% else %}REQUEST SUMMARY{% endif %}</span><h2>{% if conversation.service_request %}{{ conversation.service_request.service|default:conversation.service_request.category }}{% else %}{{ conversation.request_draft.service_name|default:'Service request' }}{% endif %}</h2></div>
+        <span class="status-pill {{ conversation.state|status_class }}">{{ conversation.state|title }}</span>
+        <dl class="side-summary-grid">
+          <div><dt>Request location</dt><dd>{% if conversation.service_request %}{{ conversation.service_request.location }}{% else %}{{ conversation.request_draft.location_label|default:'Not added yet' }}{% endif %}</dd></div>
+          <div><dt>Preferred date</dt><dd>{% if conversation.service_request %}{{ conversation.service_request.preferred_date }}{% else %}{{ conversation.request_draft.preferred_date|default:'Not added yet' }}{% endif %}</dd></div>
+          {% if conversation.service_request.preferred_time_start or conversation.service_request.preferred_time_end or conversation.service_request.preferred_time_note or conversation.request_draft.preferred_time_start or conversation.request_draft.preferred_time_end or conversation.request_draft.preferred_time_note %}<div><dt>Preferred time</dt><dd>{% if conversation.service_request %}{% if conversation.service_request.preferred_time_start %}{{ conversation.service_request.preferred_time_start|slice:':5' }}{% endif %}{% if conversation.service_request.preferred_time_start and conversation.service_request.preferred_time_end %}–{% endif %}{% if conversation.service_request.preferred_time_end %}{{ conversation.service_request.preferred_time_end|slice:':5' }}{% endif %}{{ conversation.service_request.preferred_time_note }}{% else %}{% if conversation.request_draft.preferred_time_start %}{{ conversation.request_draft.preferred_time_start|slice:':5' }}{% endif %}{% if conversation.request_draft.preferred_time_start and conversation.request_draft.preferred_time_end %}–{% endif %}{% if conversation.request_draft.preferred_time_end %}{{ conversation.request_draft.preferred_time_end|slice:':5' }}{% endif %}{{ conversation.request_draft.preferred_time_note }}{% endif %}</dd></div>{% endif %}
+          <div><dt>Budget</dt><dd>{% if conversation.service_request.budget != None and conversation.service_request %}₦{{ conversation.service_request.budget }}{% elif conversation.request_draft.budget_unknown %}Open to quote{% elif conversation.request_draft.budget %}₦{{ conversation.request_draft.budget }}{% else %}Optional · not specified{% endif %}</dd></div>
+          <div><dt>Category</dt><dd>{% if conversation.service_request %}{{ conversation.service_request.category }}{% else %}{{ conversation.request_draft.category_name|default:'In progress' }}{% endif %}</dd></div>
+        </dl>
+        <p class="side-summary-note">Request details and shared photos stay attached to this conversation.</p>
+      </section>
+      {% endif %}
+      <section class="side-card participant-card" data-artisan-reveal data-motion="right">
+        <div class="side-card-head"><span class="eyebrow">IN THIS CHAT</span><h2>Participants</h2></div>
+        {% for person in conversation.participants %}
+        <div class="participant-row"><div class="mini-avatar" aria-hidden="true">{% if person.profile_photo %}<img src="{{ person.profile_photo }}" alt="" data-profile-photo-image loading="lazy" referrerpolicy="no-referrer"><span data-profile-photo-fallback hidden>{{ person.first_name|default:'U'|slice:':1'|upper }}</span>{% else %}<span data-profile-photo-fallback>{{ person.first_name|default:'U'|slice:':1'|upper }}</span>{% endif %}</div><div><strong>{% if person.business_name %}{{ person.business_name }}{% else %}{{ person.first_name }} {{ person.last_name }}{% endif %}</strong><small>{{ person.role|title }}</small></div></div>
+        {% endfor %}
+      </section>
+      {% if conversation.dispute_case %}
+      <section class="side-card case-shortcut" data-artisan-reveal data-motion="right">
+        <span class="eyebrow">SUPPORT FOLLOW-UP</span><strong>{{ conversation.dispute_case.reference }}</strong>
+        <p>{{ conversation.dispute_case.status|title|cut:'_' }} · {{ conversation.dispute_case.subject }}</p>
+        <a href="{% url 'support-case-detail' pk=conversation.dispute_case.id %}">Open support case</a>
+      </section>
+      {% endif %}
+      <section class="side-card compact-note" data-artisan-reveal data-motion="right">
+        <strong>Safe · Simple · Transparent</strong>
+        <p>Offers, bookings, payments and support actions use your authenticated marketplace session. Direct chats never create bookings or payment records.</p>
+      </section>
+    </aside>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script><script src="{% static 'js/request-assistant.js' %}"></script>{% endblock %}

@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }} · Artisan Market{% endblock %}
+{% block content %}{% include 'partials/form_page.html' with intro='This action is submitted to the booking API. Its permissions and state transition rules remain server-side.' submit_label='Submit action' cancel_url='/bookings/' %}{% endblock %}

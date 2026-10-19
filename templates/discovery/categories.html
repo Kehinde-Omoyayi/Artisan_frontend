@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}Categories · Artisan Market{% endblock %}
+{% block content %}<section class="page-heading"><div><div class="eyebrow">Public catalogue</div><h1>Service categories</h1><p>Browse active marketplace categories and discover artisans without signing in.</p></div><a class="button button-secondary" href="{% url 'artisans' %}">Find artisans</a></section><section class="tile-grid">{% for item in items %}<a class="category-tile" href="{% url 'services' %}?category_name={{ item.name|urlencode }}"><strong>{{ item.name }}</strong><span>Explore services →</span></a>{% empty %}<div class="empty">No active categories were returned by the marketplace API.</div>{% endfor %}</section>{% endblock %}

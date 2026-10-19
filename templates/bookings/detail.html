@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% load static site_tags %}
+{% block title %}Booking {{ booking.id|slice:':8' }} · Artisan Market{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">{% endblock %}
+{% block content %}
+<section class="artisan-motion-page workflow-page booking-workflow-page booking-detail-page" data-artisan-page="booking-detail">
+  <header class="page-heading artisan-page-heading workflow-heading workflow-detail-heading" data-artisan-reveal data-motion="left">
+    <div class="workflow-heading-copy">
+      <span class="workflow-kicker"><span class="workflow-kicker-mark" aria-hidden="true">✦</span> Booking overview</span>
+      <h1 data-text-motion>Booking {{ booking.id|slice:':8' }}</h1>
+      <p>Review the agreed schedule and use an action below. Booking permissions and state changes remain with the existing API.</p>
+    </div>
+    <div class="workflow-detail-heading-side">
+      <span class="workflow-detail-reference">Reference <strong>{{ booking.id }}</strong></span>
+      <span class="status-pill {{ booking.status|status_class }} workflow-detail-status"><span class="workflow-status-dot" aria-hidden="true"></span>{{ booking.status|default:'Status unavailable'|title }}</span>
+      <a class="workflow-back-link" href="{% url 'bookings' %}"><span aria-hidden="true">←</span> All bookings</a>
+    </div>
+  </header>
+
+  <div class="workflow-detail-layout booking-detail-layout">
+    <div class="workflow-detail-main">
+      <article class="panel workflow-panel workflow-schedule-panel" aria-labelledby="booking-schedule-title" data-artisan-reveal data-motion="up">
+        <div class="workflow-panel-head">
+          <div><span class="artisan-panel-kicker">Appointment window</span><h2 id="booking-schedule-title">Agreed schedule</h2></div>
+          <span class="workflow-panel-icon workflow-panel-icon-schedule" aria-hidden="true">◷</span>
+        </div>
+        <div class="workflow-schedule-hero">
+          <span class="workflow-schedule-label">Start time</span>
+          <time class="workflow-schedule-value" datetime="{{ booking.scheduled_time_start }}">{{ booking.scheduled_time_start|default:'Not provided' }}</time>
+          <span class="workflow-schedule-divider" aria-hidden="true"><span></span><b>to</b><span></span></span>
+          <span class="workflow-schedule-label">End time</span>
+          <time class="workflow-schedule-value" datetime="{{ booking.scheduled_time_end }}">{{ booking.scheduled_time_end|default:'Not provided' }}</time>
+          <span class="workflow-schedule-glow" aria-hidden="true"></span>
+        </div>
+      </article>
+
+      <article class="panel workflow-panel workflow-reference-panel" aria-labelledby="booking-reference-title" data-artisan-reveal data-motion="left">
+        <div class="workflow-panel-head">
+          <div><span class="artisan-panel-kicker">Booking information</span><h2 id="booking-reference-title">At a glance</h2></div>
+          <span class="workflow-panel-icon" aria-hidden="true">⌘</span>
+        </div>
+        <dl class="workflow-facts-grid">
+          <div class="workflow-fact-card"><dt>Service request</dt><dd>{{ booking.request_id|default:'—' }}</dd></div>
+          <div class="workflow-fact-card"><dt>Agreed price</dt><dd>{{ booking.price_agreed|default:'—' }}</dd></div>
+          <div class="workflow-fact-card workflow-fact-card-wide"><dt>Customer ID</dt><dd>{{ booking.customer_id|default:'—' }}</dd></div>
+          <div class="workflow-fact-card workflow-fact-card-wide"><dt>Artisan ID</dt><dd>{{ booking.artisan_id|default:'—' }}</dd></div>
+        </dl>
+      </article>
+    </div>
+
+    <aside class="panel workflow-panel booking-actions-panel" aria-labelledby="booking-actions-title" data-artisan-reveal data-motion="right">
+      <div class="workflow-panel-head">
+        <div><span class="artisan-panel-kicker">Next step</span><h2 id="booking-actions-title">Booking actions</h2></div>
+        <span class="workflow-panel-icon" aria-hidden="true">↗</span>
+      </div>
+      <p class="workflow-panel-intro">Choose an action to open its existing booking flow. The API checks which transitions are valid.</p>
+      <nav class="booking-action-grid" aria-label="Booking actions">
+        <a href="{% url 'booking-accept' pk=booking.id %}" class="booking-action-link" data-artisan-action><span class="booking-action-mark" aria-hidden="true">✓</span><span>Accept</span><span class="booking-action-arrow" aria-hidden="true">↗</span></a>
+        <a href="{% url 'booking-reject' pk=booking.id %}" class="booking-action-link" data-artisan-action><span class="booking-action-mark" aria-hidden="true">×</span><span>Reject</span><span class="booking-action-arrow" aria-hidden="true">↗</span></a>
+        <a href="{% url 'booking-cancel' pk=booking.id %}" class="booking-action-link" data-artisan-action><span class="booking-action-mark" aria-hidden="true">–</span><span>Cancel</span><span class="booking-action-arrow" aria-hidden="true">↗</span></a>
+        <a href="{% url 'booking-start' pk=booking.id %}" class="booking-action-link" data-artisan-action><span class="booking-action-mark" aria-hidden="true">▶</span><span>Start</span><span class="booking-action-arrow" aria-hidden="true">↗</span></a>
+        <a href="{% url 'booking-complete' pk=booking.id %}" class="booking-action-link" data-artisan-action><span class="booking-action-mark" aria-hidden="true">✓</span><span>Complete</span><span class="booking-action-arrow" aria-hidden="true">↗</span></a>
+        <a href="{% url 'booking-confirm' pk=booking.id %}" class="booking-action-link" data-artisan-action><span class="booking-action-mark" aria-hidden="true">✓</span><span>Confirm completion</span><span class="booking-action-arrow" aria-hidden="true">↗</span></a>
+        <a href="{% url 'booking-dispute' pk=booking.id %}" class="booking-action-link booking-action-link-dispute" data-artisan-action><span class="booking-action-mark" aria-hidden="true">!</span><span>Dispute</span><span class="booking-action-arrow" aria-hidden="true">↗</span></a>
+        <a href="{% url 'booking-history' pk=booking.id %}" class="booking-action-link booking-action-link-history" data-artisan-action><span class="booking-action-mark" aria-hidden="true">◷</span><span>History</span><span class="booking-action-arrow" aria-hidden="true">↗</span></a>
+      </nav>
+      {% if role == 'customer' %}
+        <form method="post" action="{% url 'payment-initialize' booking_id=booking.id %}" class="booking-payment-form">
+          {% csrf_token %}
+          <button class="button button-primary workflow-submit" type="submit" data-artisan-action>Pay for booking <span aria-hidden="true">→</span></button>
+        </form>
+      {% endif %}
+    </aside>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script>{% endblock %}
