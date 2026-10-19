@@ -1,8 +1,12 @@
 {% extends 'base.html' %}
-{% load site_tags %}
+{% load static site_tags %}
 {% block title %}Messages · Artisan Market{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/conversations.css' %}">
+{% endblock %}
+{% block body_class %}conversation-inbox-body{% endblock %}
 {% block content %}
-<section class="page-heading"><div><div class="eyebrow">Private messages</div><h1>Your conversations</h1><p>Customer-side service requests, conversations about your own services, and direct chats stay in separate sections.</p></div></section>
+<section class="page-heading conversation-inbox-heading"><div><div class="eyebrow">Private messages</div><h1>Your conversations</h1><p>Customer-side service requests, conversations about your own services, and direct chats stay in separate sections.</p></div></section>
 <div class="conversation-inbox-groups" data-tour-target="transactions">
   {% if customer_conversations %}{% include 'conversations/_inbox_group.html' with items=customer_conversations group_id='customer-conversations' group_eyebrow='Marketplace requests' group_heading='As a customer' %}{% endif %}
   {% if artisan_conversations %}{% include 'conversations/_inbox_group.html' with items=artisan_conversations group_id='artisan-conversations' group_eyebrow='Your services' group_heading='As an artisan' %}{% endif %}

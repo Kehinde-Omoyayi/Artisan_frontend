@@ -1,15 +1,19 @@
 (() => {
+  // Renders "Oct 14, 2026 · 5:22 PM" in the viewer's own locale/time zone.
   const formatTimestamp = (rawValue) => {
     const date = new Date(rawValue || "");
     if (Number.isNaN(date.getTime())) return "";
-    const options = {
+    const parts = new Intl.DateTimeFormat(undefined, {
       month: "short",
       day: "numeric",
+      year: "numeric",
       hour: "numeric",
       minute: "2-digit",
-    };
-    if (date.getFullYear() !== new Date().getFullYear()) options.year = "numeric";
-    return new Intl.DateTimeFormat(undefined, options).format(date);
+    }).formatToParts(date);
+    const get = (type) => (parts.find((part) => part.type === type) || {}).value || "";
+    const time = [get("hour"), get("minute")].filter(Boolean).join(":");
+    const dayPeriod = get("dayPeriod");
+    return `${get("month")} ${get("day")}, ${get("year")} · ${time}${dayPeriod ? ` ${dayPeriod}` : ""}`;
   };
 
   document.querySelectorAll(".inbox-card").forEach((card) => {

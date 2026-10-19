@@ -25,8 +25,6 @@
       {% elif authenticated %}
         <a href="{% url 'home' %}">Dashboard</a>
         <a href="{% url 'artisans' %}">Find artisans</a>
-        <a href="{% url 'categories' %}">Categories</a>
-        <a href="{% url 'services' %}">Services</a>
         {% if nav_role == 'customer' %}
           <a href="{% url 'customer-profile' %}">Profile</a>
           <a href="{% url 'service-requests' %}">Requests</a>
@@ -40,9 +38,6 @@
         {% endif %}
         <a href="{% url 'support-cases' %}">Support</a>
       {% else %}
-        <a href="#categories">Visual themes</a>
-        <a href="{% url 'categories' %}">Categories</a>
-        <a href="{% url 'services' %}">Services</a>
         <a href="{% url 'artisans' %}">Find artisans</a>
         <a href="#how-it-works">How it works</a>
         <a href="#payments">Payments</a>
@@ -80,12 +75,10 @@
       {% elif authenticated %}
         <a href="{% url 'home' %}">Dashboard</a>
         <a href="{% url 'artisans' %}">Find artisans</a>
-        <a href="{% url 'services' %}">Services</a>
         <a href="{% url 'support-cases' %}">Support</a>
       {% else %}
         <a href="{% url 'home' %}">Home</a>
         <a href="{% url 'artisans' %}">Find artisans</a>
-        <a href="{% url 'services' %}">Services</a>
         <a href="{% url 'login' %}">Sign in</a>
         <a href="{% url 'register' %}">Create an account</a>
       {% endif %}

@@ -1,6 +1,6 @@
 'use strict';
 
-const SHELL_CACHE = 'artisan-market-offline-v1';
+const SHELL_CACHE = 'artisan-market-offline-v2';
 const OFFLINE_PAGE = '/offline/request-assistant/';
 const PRECACHE_URLS = [
   OFFLINE_PAGE,
@@ -53,15 +53,19 @@ async function networkFirstPage(request) {
   }
 }
 
-async function cacheFirstAsset(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
-  const response = await fetch(request);
-  if (response && response.ok) {
-    const cache = await caches.open(SHELL_CACHE);
-    await cache.put(request, response.clone());
-  }
-  return response;
+// Static assets are served from the cache for speed but always refreshed in the
+// background. A shipped stylesheet or script can therefore never be pinned to an
+// old copy by a long-lived browser cache.
+async function staleWhileRevalidateAsset(request) {
+  const cache = await caches.open(SHELL_CACHE);
+  const cached = await cache.match(request);
+  const network = fetch(request)
+    .then((response) => {
+      if (response && response.ok) cache.put(request, response.clone());
+      return response;
+    })
+    .catch(() => null);
+  return cached || (await network) || Response.error();
 }
 
 self.addEventListener('fetch', (event) => {
@@ -81,6 +85,6 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.pathname.startsWith('/static/')) {
-    event.respondWith(cacheFirstAsset(request));
+    event.respondWith(staleWhileRevalidateAsset(request));
   }
 });

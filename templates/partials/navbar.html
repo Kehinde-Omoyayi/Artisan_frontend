@@ -20,7 +20,6 @@
           <a href="{% url 'home' %}">Home</a>
           <a href="{% url 'customer-profile' %}" data-tour-target="account">Profile</a>
           <a href="{% url 'artisans' %}" data-tour-target="discovery">Find artisans</a>
-          <a href="{% url 'categories' %}" data-tour-target="discovery">Categories</a>
           <a href="{% url 'service-requests' %}" data-tour-target="transactions">Requests</a>
           <a href="{% url 'conversation-inbox' %}" data-tour-target="transactions">Messages</a>
           <a href="{% url 'notifications-page' %}" data-tour-target="notifications">Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</a>
@@ -34,7 +33,6 @@
             </button>
             <div class="dropdown">
               <a href="{% url 'artisan-profile' %}" data-tour-target="account">Artisan Profile</a>
-              <a href="{% url 'customer-profile' %}" data-tour-target="account">Customer Profile</a>
               <a href="{% url 'verification' %}" data-tour-target="account">Verification</a>
               <a href="{% url 'payout-account' %}" data-tour-target="account">Payout Account</a>
               <form method="post" action="{% url 'logout' %}" class="landing-nav__logout-form js-confirm-form" data-confirm-logout data-confirm="You will be signed out of this browser session. You can sign in again at any time.">
@@ -42,14 +40,34 @@
               </form>
             </div>
           </div>
-          <a href="{% url 'artisan-services' %}" data-tour-target="profiles-services">My Services</a>
-          <a href="{% url 'artisan-requests' %}" data-tour-target="transactions">Customer requests</a>
+          
           <a href="{% url 'artisans' %}" data-tour-target="discovery">Find artisans</a>
-          <a href="{% url 'service-requests' %}" data-tour-target="transactions">My service requests</a>
-          <a href="{% url 'bookings' %}" data-tour-target="transactions">Bookings</a>
+          
+          <div class="nav-group">
+            <button type="button" class="nav-link-button nav-account-button" data-dropdown data-tour-target="account" aria-expanded="false">
+              <span>Customer Features</span><span aria-hidden="true">⌄</span>
+            </button>
+            <div class="dropdown">
+              <a href="{% url 'customer-profile' %}" data-tour-target="account">Customer Profile</a>
+              <a href="{% url 'service-requests' %}" data-tour-target="transactions">Requests for a Service</a>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <button type="button" class="nav-link-button nav-account-button" data-dropdown data-tour-target="account" aria-expanded="false">
+              <span>Services Insight</span><span aria-hidden="true">⌄</span>
+            </button>
+            <div class="dropdown">
+              <a href="{% url 'artisan-services' %}" data-tour-target="profiles-services">My Services</a>
+              <a href="{% url 'artisan-requests' %}" data-tour-target="transactions">Customer requests</a>
+              <a href="{% url 'bookings' %}" data-tour-target="transactions">Bookings</a>
+            </div>
+          </div>
+
           <a href="{% url 'conversation-inbox' %}" data-tour-target="transactions">Messages</a>
           <a href="{% url 'notifications-page' %}" data-tour-target="notifications">Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</a>
           <a href="{% url 'support-cases' %}" data-tour-target="support">Support</a>
+
         {% elif nav_role == 'staff' %}
           {% if platform_manager %}
             <a href="{% url 'home' %}">Manager Overview</a>
@@ -63,8 +81,7 @@
         {% else %}
           <a href="{% url 'home' %}">Dashboard</a>
           <a href="{% url 'artisans' %}" data-tour-target="discovery">Find artisans</a>
-          <a href="{% url 'categories' %}" data-tour-target="discovery">Categories</a>
-          <a href="{% url 'service-requests' %}" data-tour-target="transactions">Requests</a>
+          <a href="{% url 'service-requests' %}" data-tour-target="transactions">MAke a Request</a>
           <a href="{% url 'conversation-inbox' %}" data-tour-target="transactions">Messages</a>
           <a href="{% url 'notifications-page' %}" data-tour-target="notifications">Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</a>
           <a href="{% url 'support-cases' %}" data-tour-target="support">Support</a>
@@ -107,7 +124,7 @@
         {% if nav_role == 'customer' %}
           <a href="{% url 'customer-profile' %}" data-tour-target="account">Profile</a>
           <a href="{% url 'artisans' %}" data-tour-target="discovery">Find artisans</a>
-          <a href="{% url 'service-requests' %}" data-tour-target="transactions">Requests</a>
+          <a href="{% url 'service-requests' %}" data-tour-target="transactions">Make a Request</a>
           <a href="{% url 'conversation-inbox' %}" data-tour-target="transactions">Messages</a>
           <a href="{% url 'notifications-page' %}" data-tour-target="notifications">Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</a>
           <a href="{% url 'support-cases' %}" data-tour-target="support">Support</a>
@@ -120,22 +137,41 @@
             </button>
             <div class="dropdown">
               <a href="{% url 'artisan-profile' %}" data-tour-target="account">Artisan Profile</a>
-              <a href="{% url 'customer-profile' %}" data-tour-target="account">Customer Profile</a>
               <a href="{% url 'verification' %}" data-tour-target="account">Verification</a>
               <a href="{% url 'payout-account' %}" data-tour-target="account">Payout Account</a>
-              <form method="post" action="{% url 'logout' %}" class="dropdown-logout-form js-confirm-form" data-confirm-logout data-confirm="You will be signed out of this browser session. You can sign in again at any time.">
-                {% csrf_token %}<button class="nav-logout dropdown-logout" type="submit">Log Out</button>
+              <form method="post" action="{% url 'logout' %}" class="landing-nav__logout-form js-confirm-form" data-confirm-logout data-confirm="You will be signed out of this browser session. You can sign in again at any time.">
+                {% csrf_token %}<button class="landing-nav__logout dropdown-logout" type="submit">Log Out</button>
               </form>
             </div>
           </div>
-          <a href="{% url 'artisan-services' %}" data-tour-target="profiles-services">My Services</a>
-          <a href="{% url 'artisan-requests' %}" data-tour-target="transactions">Customer requests</a>
+          
           <a href="{% url 'artisans' %}" data-tour-target="discovery">Find artisans</a>
-          <a href="{% url 'service-requests' %}" data-tour-target="transactions">My service requests</a>
-          <a href="{% url 'bookings' %}" data-tour-target="transactions">Bookings</a>
+          
+          <div class="nav-group">
+            <button type="button" class="nav-link-button nav-account-button" data-dropdown data-tour-target="account" aria-expanded="false">
+              <span>Customer Features</span><span aria-hidden="true">⌄</span>
+            </button>
+            <div class="dropdown">
+              <a href="{% url 'customer-profile' %}" data-tour-target="account">Customer Profile</a>
+              <a href="{% url 'service-requests' %}" data-tour-target="transactions">Requests for a Service</a>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <button type="button" class="nav-link-button nav-account-button" data-dropdown data-tour-target="account" aria-expanded="false">
+              <span>Services Insight</span><span aria-hidden="true">⌄</span>
+            </button>
+            <div class="dropdown">
+              <a href="{% url 'artisan-services' %}" data-tour-target="profiles-services">My Services</a>
+              <a href="{% url 'artisan-requests' %}" data-tour-target="transactions">Customer requests</a>
+              <a href="{% url 'bookings' %}" data-tour-target="transactions">Bookings</a>
+            </div>
+          </div>
+
           <a href="{% url 'conversation-inbox' %}" data-tour-target="transactions">Messages</a>
           <a href="{% url 'notifications-page' %}" data-tour-target="notifications">Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</a>
           <a href="{% url 'support-cases' %}" data-tour-target="support">Support</a>
+
         {% elif nav_role == 'staff' %}
           {% if platform_manager %}
             <a href="{% url 'dashboard' %}">Manager Overview</a>
@@ -149,7 +185,7 @@
         {% else %}
           <a href="{% url 'home' %}">Dashboard</a>
           <a href="{% url 'artisans' %}" data-tour-target="discovery">Find artisans</a>
-          <a href="{% url 'service-requests' %}" data-tour-target="transactions">Requests</a>
+          <a href="{% url 'service-requests' %}" data-tour-target="transactions">Make a Request</a>
           <a href="{% url 'conversation-inbox' %}" data-tour-target="transactions">Messages</a>
           <a href="{% url 'notifications-page' %}" data-tour-target="notifications">Notifications{% if unread_notification_count %} <span class="nav-badge">{{ unread_notification_count }}</span>{% endif %}</a>
           <a href="{% url 'support-cases' %}" data-tour-target="support">Support</a>

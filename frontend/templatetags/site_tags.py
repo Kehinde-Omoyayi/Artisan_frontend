@@ -96,6 +96,32 @@ def status_class(value):
 
 
 @register.simple_tag
+def asset(path):
+    """Static URL plus a content stamp.
+
+    Browsers (and the offline service worker) cache ``/static/`` aggressively.
+    Appending the file's modification time means a shipped stylesheet or script
+    is fetched again the moment it changes, instead of staying pinned to an old
+    copy inside a long-lived cache.
+    """
+    import os
+
+    from django.conf import settings
+
+    try:
+        url = static(path)
+    except ValueError:
+        # Manifest storage raises for files missing from the manifest; fall back to
+        # the plain static path so a single missing asset cannot break the page.
+        url = f"{settings.STATIC_URL.rstrip('/')}/{str(path).lstrip('/')}"
+    for directory in getattr(settings, "STATICFILES_DIRS", ()) or ():
+        candidate = os.path.join(str(directory), path)
+        if os.path.exists(candidate):
+            return format_html("{}?v={}", url, int(os.path.getmtime(candidate)))
+    return url
+
+
+@register.simple_tag
 def page_script(path):
     """Emit the per-page script only when that file exists in the static manifest.
 
@@ -104,7 +130,41 @@ def page_script(path):
     if not path:
         return ""
     try:
-        url = static(path)
+        url = asset(path)
     except ValueError:
         return ""
+    if not url:
+        return ""
     return format_html('<script src="{}"></script>', url)
+
+@register.simple_tag
+def discovery_url(params, *drop):
+    """Rebuild the discovery URL without the named keys (used by the filter tags)."""
+    from urllib.parse import urlencode
+
+    from django.urls import reverse
+
+    values = params or {}
+    query = [
+        (key, value)
+        for key, value in values.items()
+        if value not in (None, '', False) and key not in drop
+    ]
+    base = reverse('artisans')
+    return f"{base}?{urlencode(query)}" if query else base
+
+
+@register.filter
+def institution_label(value, institutions):
+    """Human label for the institution currently applied to the discovery filters."""
+    for item in institutions or ():
+        if not isinstance(item, dict):
+            continue
+        if str(item.get('id') or '') != str(value or ''):
+            continue
+        name = str(item.get('name') or '').strip()
+        campus = str(item.get('campus') or '').strip()
+        if name and campus:
+            return f"{name} — {campus}"
+        return name or 'Selected institution'
+    return 'Selected institution'

@@ -2187,6 +2187,7 @@ def artisans(request):
         institutions = []
 
     api_filters = {key: value for key, value in filters.items() if value}
+    directory_unavailable = False
     try:
         _, payload, _ = client.get(
             '/profile/artisan/details/',
@@ -2198,6 +2199,9 @@ def artisans(request):
         if isinstance(exc, APIError):
             handle_api_error(request, exc)
         items, total_count = [], 0
+        # Never present a failed lookup as "no artisans matched": the two look
+        # identical to a visitor and hide real outages and rate limits.
+        directory_unavailable = True
 
     promoted_items = _public_promoted_discovery(request, api_filters)
     categories = _discovery_categories(category_items, service_items, filters)
@@ -2233,6 +2237,7 @@ def artisans(request):
         area_options=area_options,
         has_active_filters=has_active_filters,
         clear_service_url=_discovery_url(clear_service_params),
+        directory_unavailable=directory_unavailable,
     )
 
 
@@ -3041,18 +3046,27 @@ def _catalog_endpoint_items(request, client, endpoint):
     return items
 
 
-def _artisan_service_catalog(request, client):
-    catalog = {}
-    for key, endpoint in (
+def _artisan_service_catalog(request, client, *, include_institutions=False):
+    """Catalogue data shared by the service and request forms.
+
+    Institutions are only needed by the "My services" picker, so they are fetched
+    on request; other callers keep their existing API footprint.
+    """
+    endpoints = [
         ('categories', '/services/categories/'),
         ('services', '/services/service_cat/'),
         ('locations', '/services/locations/'),
-    ):
+    ]
+    if include_institutions:
+        endpoints.append(('institutions', '/services/institutions/'))
+    catalog = {'institutions': []}
+    for key, endpoint in endpoints:
         catalog[key] = _catalog_endpoint_items(request, client, endpoint)
     return catalog
 
 
 ANYWHERE_LOCATION_VALUE = '__anywhere__'
+MAX_ARTISAN_SERVICES = 3
 
 
 def _location_id_for_service(item_location, locations):
@@ -3109,20 +3123,24 @@ def _artisan_service_payload(cleaned_data, locations):
     }
     starting_price = cleaned_data.get('starting_price')
     if starting_price is not None:
-        payload['starting_price'] = starting_price
+        # Decimal is not JSON serialisable; the API accepts a decimal string.
+        payload['starting_price'] = f'{starting_price:.2f}'
     return payload
 
 
 @api_guard
 def artisan_services(request):
     client = APIClient(request)
-    catalog = _artisan_service_catalog(request, client)
+    catalog = _artisan_service_catalog(request, client, include_institutions=True)
     try:
         _, payload, _ = client.get('/services/get_artisan_services/')
         items = extract_items(payload)
     except APIError as exc:
         handle_api_error(request, exc)
         items = []
+
+    service_count = len(items)
+    at_limit = service_count >= MAX_ARTISAN_SERVICES
 
     if request.method == 'POST' and request.POST.get('_delete') == '1':
         offering_id = request.POST.get('offering_id', '').strip()
@@ -3189,6 +3207,33 @@ def artisan_services(request):
         form=form,
         editing_item=editing_item,
         service_catalog=catalog['services'],
+        location_records=[
+            {
+                'id': str(location.get('id')),
+                'country': str(location.get('country') or ''),
+                'state': str(location.get('state') or ''),
+                'area': str(location.get('area') or ''),
+            }
+            for location in catalog['locations']
+            if isinstance(location, dict) and location.get('id')
+        ],
+        institutions=[
+            {
+                'id': str(item.get('id')),
+                'name': str(item.get('name') or ''),
+                'campus': str(item.get('campus') or ''),
+                'abbreviation': str(item.get('abbreviation') or ''),
+                'location_id': str(item.get('location_id') or ''),
+                'state': str(item.get('state') or ''),
+                'area': str(item.get('area') or ''),
+            }
+            for item in catalog['institutions']
+            if isinstance(item, dict) and item.get('id')
+        ],
+        anywhere_value=ANYWHERE_LOCATION_VALUE,
+        service_count=service_count,
+        max_services=MAX_ARTISAN_SERVICES,
+        at_limit=at_limit,
     )
 
 

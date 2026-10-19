@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load static %}
+{% load static site_tags %}
 {% block title %}My services · Artisan Market{% endblock %}
 {% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">{% endblock %}
 {% block content %}
@@ -16,8 +16,110 @@
         <span class="artisan-panel-mark" aria-hidden="true">{% if editing_item %}✎{% else %}＋{% endif %}</span>
       </div>
       <p class="artisan-form-intro">Choose a catalogue service and either Anywhere or a registered marketplace location. Service locations are selected from the existing marketplace catalogue; this form does not create new locations.</p>
-      <form method="post" class="js-submit-form artisan-service-form" data-artisan-form data-service-filter-form>
-        {% include 'partials/form.html' %}
+      <form method="post" class="js-submit-form artisan-service-form" data-artisan-form data-service-filter-form data-service-picker-form data-anywhere-value="{{ anywhere_value }}">
+        {% csrf_token %}
+        {{ form.category_name.as_hidden }}
+        {{ form.service_name.as_hidden }}
+        {{ form.location_country_filter.as_hidden }}
+        {{ form.location_state_filter.as_hidden }}
+        {{ form.location_area_filter.as_hidden }}
+        {{ form.institution.as_hidden }}
+        {{ form.location_id.as_hidden }}
+
+        {% if form.non_field_errors %}<div class="form-error">{{ form.non_field_errors }}</div>{% endif %}
+
+        <div class="artisan-service-pickers" data-service-pickers>
+          <section class="artisan-filter-row" data-service-row data-picker-key="category">
+            <button class="artisan-filter-row-head" type="button" data-picker-toggle aria-expanded="false" aria-controls="service-picker-category">
+              <span class="artisan-filter-row-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><rect x="4" y="4" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+              <span class="artisan-filter-row-label">Category</span>
+              <span class="artisan-filter-row-value{% if not form.category_name.value %} is-placeholder{% endif %}" data-picker-value>{% if form.category_name.value %}{{ form.category_name.value }}{% else %}Choose a category{% endif %}</span>
+              <span class="artisan-filter-chevron" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+            </button>
+            <div class="artisan-filter-row-body" id="service-picker-category" data-picker-body hidden>
+              <div class="artisan-filter-options" role="listbox" aria-label="Category" data-picker-options="category"></div>
+            </div>
+          </section>
+
+          <section class="artisan-filter-row" data-service-row data-picker-key="service">
+            <button class="artisan-filter-row-head" type="button" data-picker-toggle aria-expanded="false" aria-controls="service-picker-service">
+              <span class="artisan-filter-row-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="M4 7.5h16M4 12h16M4 16.5h10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg></span>
+              <span class="artisan-filter-row-label">Service</span>
+              <span class="artisan-filter-row-value{% if not form.service_name.value %} is-placeholder{% endif %}" data-picker-value>{% if form.service_name.value %}{{ form.service_name.value }}{% else %}Choose a category first{% endif %}</span>
+              <span class="artisan-filter-chevron" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+            </button>
+            <div class="artisan-filter-row-body" id="service-picker-service" data-picker-body hidden>
+              <div class="artisan-filter-options" role="listbox" aria-label="Service" data-picker-options="service"></div>
+              <p class="artisan-filter-empty" data-picker-empty="service" hidden>Choose a category to list its services.</p>
+            </div>
+          </section>
+
+          <div class="artisan-service-coverage" data-coverage-block>
+            <button class="artisan-anywhere-toggle" type="button" data-anywhere-toggle aria-pressed="true">
+              <span class="artisan-anywhere-switch" aria-hidden="true"><span class="artisan-anywhere-knob"></span></span>
+              <span class="artisan-anywhere-copy">
+                <strong>Anywhere</strong>
+                <small data-anywhere-caption>Available across all locations</small>
+              </span>
+            </button>
+          </div>
+
+          <div class="artisan-service-location-rows" data-location-rows hidden>
+            <section class="artisan-filter-row" data-service-row data-picker-key="state">
+              <button class="artisan-filter-row-head" type="button" data-picker-toggle aria-expanded="false" aria-controls="service-picker-state">
+                <span class="artisan-filter-row-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="M9 4.5 3.8 6.7v12.8L9 17.3l6 2.2 5.2-2.2V4.5L15 6.7 9 4.5Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.6"/><path d="M9 4.5v12.8M15 6.7v12.8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+                <span class="artisan-filter-row-label">State or region</span>
+                <span class="artisan-filter-row-value{% if not form.location_state_filter.value %} is-placeholder{% endif %}" data-picker-value>{% if form.location_state_filter.value %}{{ form.location_state_filter.value }}{% else %}All states{% endif %}</span>
+                <span class="artisan-filter-chevron" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+              </button>
+              <div class="artisan-filter-row-body" id="service-picker-state" data-picker-body hidden>
+                <div class="artisan-filter-options" role="listbox" aria-label="State or region" data-picker-options="state"></div>
+              </div>
+            </section>
+
+            <section class="artisan-filter-row" data-service-row data-picker-key="area">
+              <button class="artisan-filter-row-head" type="button" data-picker-toggle aria-expanded="false" aria-controls="service-picker-area">
+                <span class="artisan-filter-row-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="M12 21s6.4-5.6 6.4-10.2A6.4 6.4 0 0 0 5.6 10.8C5.6 15.4 12 21 12 21Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.6"/><circle cx="12" cy="10.6" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+                <span class="artisan-filter-row-label">Area or locality</span>
+                <span class="artisan-filter-row-value{% if not form.location_area_filter.value %} is-placeholder{% endif %}" data-picker-value>{% if form.location_area_filter.value %}{{ form.location_area_filter.value }}{% else %}All areas{% endif %}</span>
+                <span class="artisan-filter-chevron" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+              </button>
+              <div class="artisan-filter-row-body" id="service-picker-area" data-picker-body hidden>
+                <div class="artisan-filter-options" role="listbox" aria-label="Area or locality" data-picker-options="area"></div>
+                <p class="artisan-filter-empty" data-picker-empty="area" hidden>Choose a state first.</p>
+              </div>
+            </section>
+
+            <section class="artisan-filter-row" data-service-row data-picker-key="institution">
+              <button class="artisan-filter-row-head" type="button" data-picker-toggle aria-expanded="false" aria-controls="service-picker-institution">
+                <span class="artisan-filter-row-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="M4 20.4h16M6.2 20.4V9.6M17.8 20.4V9.6M3.4 9.6 12 4l8.6 5.6M9.4 20.4v-5.2h5.2v5.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg></span>
+                <span class="artisan-filter-row-label">Closest institution</span>
+                <span class="artisan-filter-row-value is-placeholder" data-picker-value>Optional</span>
+                <span class="artisan-filter-chevron" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+              </button>
+              <div class="artisan-filter-row-body" id="service-picker-institution" data-picker-body hidden>
+                <div class="artisan-filter-options" role="listbox" aria-label="Closest institution" data-picker-options="institution"></div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="form-field artisan-service-budget{% if form.starting_price.errors %} has-error{% endif %}">
+          {{ form.starting_price.label_tag }}
+          {{ form.starting_price }}
+          <small class="help">{{ form.starting_price.help_text }}</small>
+          {% if form.starting_price.errors %}<div class="field-error">{{ form.starting_price.errors|striptags }}</div>{% endif %}
+        </div>
+        {% for field in form %}
+          {% if field.name == 'category_name' or field.name == 'service_name' or field.name == 'location_country_filter' or field.name == 'location_state_filter' or field.name == 'location_area_filter' or field.name == 'institution' or field.name == 'location_id' or field.name == 'starting_price' %}{% else %}
+            {% if field.errors %}<div class="field-error">{{ field.errors|striptags }}</div>{% endif %}
+          {% endif %}
+        {% endfor %}
+
+        {{ location_records|json_script:"service-location-records" }}
+        {{ institutions|json_script:"service-institution-records" }}
+        {{ service_catalog|json_script:"service-catalogue-records" }}
+
         {% if editing_item %}<input type="hidden" name="offering_id" value="{{ editing_item.id }}">{% endif %}
         <div class="artisan-service-form-actions">
           <button class="button button-primary artisan-form-submit" type="submit" data-artisan-action>{% if editing_item %}Save changes{% else %}Add service{% endif %}</button>
@@ -34,11 +136,11 @@
             <header class="artisan-service-record-head">
               <span class="service-list-index">{{ forloop.counter|stringformat:'02d' }}</span>
               <div class="service-list-copy"><span class="artisan-service-record-category">{{ item.category_name|default:'Service category' }}</span><h3>{{ item.service_name|default:'Service offering' }}</h3></div>
-              <span class="service-list-price">{% if item.starting_price == 0 or item.starting_price %}₦{{ item.starting_price|floatformat:2 }}{% else %}Budget on request{% endif %}</span>
+              <span class="service-list-price">{% if item.starting_price == 0 or item.starting_price %}₦{{ item.starting_price|floatformat:'2g' }}{% else %}Budget on request{% endif %}</span>
             </header>
             <div class="artisan-service-record-facts">
               <div><span>Service location</span><strong>{% if item.location %}{{ item.location.area|default:'' }}{% if item.location.state %}, {{ item.location.state }}{% endif %}{% if item.location.country %}, {{ item.location.country }}{% endif %}{% else %}Anywhere{% endif %}</strong></div>
-              <div><span>Starting budget</span><strong>{% if item.starting_price == 0 or item.starting_price %}₦{{ item.starting_price|floatformat:2 }}{% else %}On request{% endif %}</strong></div>
+              <div><span>Starting budget</span><strong>{% if item.starting_price == 0 or item.starting_price %}₦{{ item.starting_price|floatformat:'2g' }}{% else %}On request{% endif %}</strong></div>
             </div>
             <div class="artisan-service-record-actions">
               <a class="button button-secondary" href="{% url 'artisan-services' %}?edit={{ item.id }}#service-offer-form">Edit service</a>
@@ -58,4 +160,4 @@
   </section>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script>{% endblock %}
+{% block scripts %}{% page_script 'js/pages/artisan-ui.js' %}{% endblock %}

@@ -14,20 +14,17 @@
           <span data-profile-photo-fallback>{{ item.counterparty.first_name|default:item.counterparty.business_name|default:'U'|slice:':1'|upper }}</span>
           {% endif %}
         </span>
-        <span class="inbox-card-main">
-          <span class="inbox-card-head">
-            <span class="inbox-card-person">
-              <strong>{% if item.counterparty.first_name or item.counterparty.last_name %}{{ item.counterparty.first_name }} {{ item.counterparty.last_name }}{% else %}{{ item.counterparty.business_name|default:item.title|default:'Conversation' }}{% endif %}</strong>
-              <small>
-                {% if item.viewer_role == 'direct' %}Private chat{% elif item.counterparty.role == 'artisan' %}Artisan{% if item.counterparty.business_name %} · {{ item.counterparty.business_name }}{% endif %} · Service request{% else %}Customer · Service request{% endif %}
-              </small>
+        <span class="inbox-card-body">
+          <span class="inbox-card-ident">
+            <strong class="inbox-card-name">{% if item.counterparty.first_name or item.counterparty.last_name %}{{ item.counterparty.first_name }} {{ item.counterparty.last_name }}{% else %}{{ item.counterparty.business_name|default:item.title|default:'Conversation' }}{% endif %}</strong>
+            <span class="inbox-card-role">
+              {% if item.viewer_role == 'direct' %}Private chat{% if item.counterparty.business_name %} <span class="inbox-card-dot" aria-hidden="true">•</span> {{ item.counterparty.business_name }}{% endif %}{% elif item.counterparty.role == 'artisan' %}{{ item.counterparty.service_label|default:'Artisan' }}{% if item.counterparty.business_name %} <span class="inbox-card-dot" aria-hidden="true">•</span> {{ item.counterparty.business_name }}{% endif %}{% else %}Customer <span class="inbox-card-dot" aria-hidden="true">•</span> Service request{% endif %}
             </span>
           </span>
-          <span class="inbox-card-preview">{{ item.last_message_preview|default:'Start the conversation'|truncatechars:150 }}</span>
-          <span class="inbox-card-footer">
-            <time class="workflow-local-time" datetime="{{ item.last_message_at|default:item.updated_at }}" data-utc-time="{{ item.last_message_at|default:item.updated_at }}">{{ item.last_message_at|default:item.updated_at }}</time>
-            <span class="inbox-card-state">{{ item.state|title }}</span>
-          </span>
+          <span class="inbox-card-preview">{{ item.last_message_text|default:item.last_message_preview|default:'Start the conversation'|truncatechars:150 }}</span>
+          {% with stamp=item.last_message_at|default:item.updated_at %}
+          <time class="inbox-card-time workflow-local-time" datetime="{{ stamp }}" data-utc-time="{{ stamp }}">{{ stamp|date:"M j, Y · g:i A" }}</time>
+          {% endwith %}
         </span>
         {% if item.unread_count %}
         <span class="unread-count-badge" aria-label="{{ item.unread_count }} unread message{% if item.unread_count != 1 %}s{% endif %}">{{ item.unread_count }}</span>
