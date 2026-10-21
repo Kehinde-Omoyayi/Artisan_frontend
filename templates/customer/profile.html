@@ -6,6 +6,7 @@
 {% block head %}
 {% if is_landing_page %}<link rel="stylesheet" href="{% static 'css/landing.css' %}">{% endif %}
 <link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">
+<link rel="stylesheet" href="{% asset 'css/customer-profile-pickers.css' %}">
 {% if is_landing_page %}<link rel="stylesheet" href="{% static 'css/authenticated-home.css' %}">{% endif %}
 {% endblock %}
 {% block content %}
@@ -32,8 +33,9 @@
       </header>
       <p class="workspace-card-intro">Keep your contact and location details current so artisans can coordinate with you.</p>
       {% if profile_completion_required %}<div class="workflow-empty-catalog-note" role="status">Complete these profile fields before continuing: {{ missing_profile_fields|join:", " }}. Your profile is needed to submit service requests and send marketplace messages.</div>{% endif %}
-      <form method="post" enctype="multipart/form-data" class="js-submit-form customer-profile-form" data-artisan-form>
+      <form method="post" enctype="multipart/form-data" class="js-submit-form customer-profile-form" data-artisan-form data-profile-pickers data-institutions-url="{% url 'institution-catalogue' %}" data-today="{{ profile_picker_today }}" data-institution-label="{{ profile.nearest_institution_name }}">
         {% if profile_completion_required and next_target %}<input type="hidden" name="next" value="{{ next_target }}">{% endif %}
+        {{ profile_picker_catalogue|json_script:'profile-geography-data' }}
         {% include 'partials/form.html' %}
         <button class="button button-primary workflow-submit" type="submit" data-artisan-action>Save changes <span aria-hidden="true">→</span></button>
       </form>
@@ -98,4 +100,4 @@
   </dialog>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script><script src="{% static 'js/pages/profile-activity.js' %}"></script>{% endblock %}
+{% block scripts %}<script src="{% asset 'js/customer-profile-pickers.js' %}"></script><script src="{% static 'js/pages/artisan-ui.js' %}"></script><script src="{% static 'js/pages/profile-activity.js' %}"></script>{% endblock %}

@@ -26,9 +26,9 @@
   const menuButton = document.querySelector('[data-landing-menu]');
   const navigation = document.querySelector('[data-landing-nav]');
 
-  const ROTATION_MS = 3000;
-  const TITLE_TYPE_MS = 950;
-  const DESCRIPTION_TYPE_MS = 1380;
+  const ROTATION_MS = window.ArtisanMotion?.heroRotationMs || 2000;
+  const TITLE_TYPE_MS = window.ArtisanMotion?.titleTypeMs || 350;
+  const DESCRIPTION_TYPE_MS = window.ArtisanMotion?.descriptionTypeMs || 380;
   const ERASE_MS = 235;
   const IMAGE_FADE_MS = 235;
   const ROTATION_LEAD_MS = Math.max(0, ROTATION_MS - ERASE_MS);
@@ -36,7 +36,7 @@
     ? window.matchMedia('(prefers-reduced-motion: reduce)')
     : { matches: false };
 
-  let reducedMotion = Boolean(motionPreference.matches);
+  let reducedMotion = Boolean(motionPreference.matches) || document.documentElement.classList.contains('experience-motion-off');
   let currentIndex = slides.length ? 0 : -1;
   let userPaused = false;
   let documentVisible = document.visibilityState !== 'hidden';
@@ -328,7 +328,7 @@
   }
 
   function handleMotionPreference(event) {
-    reducedMotion = Boolean(event.matches);
+    reducedMotion = Boolean(event.matches) || document.documentElement.classList.contains('experience-motion-off');
     updateMotionControls();
     if (reducedMotion) {
       body.classList.remove('motion-ready');
@@ -340,6 +340,8 @@
       scheduleNext();
     }
   }
+
+  window.addEventListener('experience-motion-change', event => handleMotionPreference({matches:event.detail.reduced}));
 
   if (typeof motionPreference.addEventListener === 'function') {
     motionPreference.addEventListener('change', handleMotionPreference);

@@ -58,9 +58,9 @@ ACTION_PROFILE_FIELD_LABELS = {
     'country': 'Country', 'state': 'State or region', 'area': 'Area or locality',
 }
 SERVICE_REQUEST_DRAFT_FIELDS = (
-    'category_name', 'service_name', 'location_id', 'preferred_date',
-    'preferred_time_start', 'preferred_time_end', 'preferred_time_note',
-    'urgency', 'budget', 'description', 'additional_details',
+    'category_name', 'service_name',
+    'location_country_filter', 'location_state_filter', 'location_area_filter',
+    'preferred_date', 'urgency', 'budget', 'description',
 )
 CONVERSATION_REQUEST_FIELDS = (
     'service_id', 'category_id', 'description', 'location_id', 'country', 'state', 'area',
@@ -535,6 +535,7 @@ def cleaned_payload(cleaned):
         'phone_country_calling_code',
         'location_country_filter',
         'location_state_filter',
+        'location_area_filter',
     }
     for key, value in cleaned.items():
         if key in internal_fields or (key == 'phone_number' and phone_unchanged):
@@ -997,23 +998,27 @@ def home(request):
         'cases': [],
         'profile_health': None,
     }
-    try:
-        if role == 'artisan':
-            _, data['profile'], _ = client.get('/profile/artisan/personal/profile/')
-            data['profile_health'] = _action_profile_health_summary(data['profile'])
-            _, booking_payload, _ = client.get('/booking/')
-            _, service_payload, _ = client.get('/services/get_artisan_services/')
-            _, request_payload, _ = client.get('/services/artisan/requests/', params={'limit': 6, 'offset': 0})
-            request_items = extract_items(request_payload)
-            data['bookings'] = extract_items(booking_payload)[:6]
-            data['services'] = extract_items(service_payload)
-            data['requests'] = request_items[:6]
-            data['request_total'] = request_payload.get('count', len(request_items)) if isinstance(request_payload, dict) else len(request_items)
-    except APIError as exc:
-        handle_api_error(request, exc)
-
     if role == 'artisan':
-        data['notifications'], data['notification_total'] = _recent_notification_items(request, client, limit=5)
+        # Independent loads: a booking/catalogue failure cannot hide profile health.
+        try:
+            _, profile_payload, _ = client.get('/profile/artisan/personal/profile/')
+            if isinstance(profile_payload, dict) and profile_payload:
+                data['profile'] = profile_payload
+                data['profile_health'] = _action_profile_health_summary(profile_payload)
+        except APIError as exc:
+            handle_api_error(request, exc)
+        for key, endpoint in [('bookings', '/booking/'), ('services', '/services/get_artisan_services/'), ('requests', '/services/artisan/requests/')]:
+            try:
+                _, payload, _ = client.get(endpoint, params={'limit': 30, 'offset': 0})
+                items = extract_items(payload)
+                data[key] = items[:30]
+                if key == 'requests':
+                    data['request_total'] = _count_from_payload(payload)
+                if key == 'bookings':
+                    data['booking_total'] = _count_from_payload(payload)
+            except APIError as exc:
+                handle_api_error(request, exc)
+        data['notifications'], data['notification_total'] = _recent_notification_items(request, client, limit=30)
     return page(request, 'dashboard.html', **_landing_home_context(), **data)
 
 
@@ -1487,6 +1492,7 @@ def acknowledge_payment_notice(request):
 
 @api_guard
 def customer_profile(request, *, home_dashboard=False):
+    from .geography import world_geography
     client = APIClient(request)
     try:
         _, profile, _ = client.get('/profile/customer/personal/profile/')
@@ -1516,10 +1522,14 @@ def customer_profile(request, *, home_dashboard=False):
     if request.method == 'POST' and form.is_valid():
         try:
             data = {key: value for key, value in cleaned_payload(form.cleaned_data).items() if key != 'profile_photo'}
+            if not form.cleaned_data.get('nearest_institution'):
+                data['nearest_institution'] = None
             files = {}
             if request.FILES.get('profile_photo'):
                 uploaded = request.FILES['profile_photo']
                 files['profile_photo'] = (uploaded.name, uploaded.file, uploaded.content_type or 'application/octet-stream')
+            if files and data.get('nearest_institution') is None:
+                data['nearest_institution'] = ''  # Multipart uses blank to clear the nullable relation.
             _, profile, _ = client.patch('/profile/customer/personal/profile/', data=data, files=files or None)
             messages.success(request, 'Profile updated successfully.')
             pending_response = _continue_pending_protected_action(request)
@@ -1543,6 +1553,8 @@ def customer_profile(request, *, home_dashboard=False):
         request,
         'customer/profile.html',
         profile=profile,
+        profile_picker_catalogue=world_geography(),
+        profile_picker_today=timezone.localdate().isoformat(),
         form=form,
         role='customer',
         nav_role=current_role(request),
@@ -1558,6 +1570,7 @@ def customer_profile(request, *, home_dashboard=False):
 
 @api_guard
 def artisan_profile(request):
+    from .geography import world_geography
     client = APIClient(request)
     try:
         _, profile, _ = client.get('/profile/artisan/personal/profile/')
@@ -1590,6 +1603,8 @@ def artisan_profile(request):
         if request.FILES.get('profile_photo'):
             f = request.FILES['profile_photo']
             files['profile_photo'] = (f.name, f.file, f.content_type)
+        if not form.cleaned_data.get('nearest_institution'):
+            data['nearest_institution'] = '' if files else None
         try:
             _, profile, _ = client.patch('/profile/artisan/personal/profile/', data=data, files=files or None)
             messages.success(request, 'Artisan profile updated successfully.')
@@ -1614,10 +1629,12 @@ def artisan_profile(request):
     payout_notifications = [item for item in recent_notifications if _is_payout_notification(item)][:2]
     notification_previews = [item for item in recent_notifications if not _is_payout_notification(item)][:2]
     notifications = recent_notifications[:5]
-    return page(
+    response = page(
         request,
         'artisan/profile.html',
         profile=profile,
+        profile_picker_catalogue=world_geography(),
+        profile_picker_today=timezone.localdate().isoformat(),
         form=form,
         role='artisan',
         profile_health=_action_profile_health_summary(profile),
@@ -2703,15 +2720,49 @@ def location_detail(request, pk):
 
 SERVICE_REQUEST_PAGE_SIZE = 12
 ARTISAN_REQUEST_FILTERS = (
-    'category_name', 'service_name', 'location_country', 'location_state',
-    'location_area', 'urgency', 'preferred_date_from', 'preferred_date_to',
-    'min_budget', 'max_budget', 'ordering',
+    'service_name', 'location_country', 'location_area', 'urgency', 'q',
 )
 RESPONDER_FILTERS = ('q', 'state', 'area', 'min_rating', 'ordering')
 
 
 def _request_form_catalog(request, client):
     return _artisan_service_catalog(request, client)
+
+
+def _request_geography(locations):
+    from .geography import world_geography
+    # Existing canonical marketplace locations remain usable alongside worldwide data.
+    data = {country: dict(states) for country, states in world_geography().items()}
+    for location in locations:
+        country, state, area = (location.get(key, '') for key in ('country', 'state', 'area'))
+        if country and state and area:
+            states = data.setdefault(country, {})
+            states[state] = sorted(set(states.get(state, [])) | {area}, key=str.casefold)
+    return data
+
+
+def _request_picker_catalogue(form):
+    """Catalogue data for the request pickers (categories, services, locations)."""
+    services = []
+    for category, names in form.fields['service_name'].choices:
+        if not category:
+            continue
+        for name, label in names:
+            services.append({'name': str(label), 'category_name': str(category)})
+    categories = [
+        {'name': str(value)}
+        for value, label in form.fields['category_name'].choices
+        if value
+    ]
+    return {
+        'categories': categories,
+        'services': services,
+        'locations': form.location_records,
+        'geography': _request_geography(form.location_records),
+        # The browser clock can sit in another time zone; the marketplace's
+        # "today" is what the API validates against, so ship it with the data.
+        'today': timezone.localdate().isoformat(),
+    }
 
 
 def _service_request_form(request, catalog, *, data=None, initial=None):
@@ -2733,6 +2784,12 @@ def _service_request_payload(cleaned, locations):
         ),
         None,
     )
+    if not location:
+        from .geography import canonical_location
+        location = canonical_location(
+            cleaned.get('location_country_filter'), cleaned.get('location_state_filter'),
+            cleaned.get('location_area_filter'),
+        )
     if not location:
         return None
     payload = cleaned_payload({
@@ -2761,9 +2818,43 @@ def _safe_page_offset(value):
         return 0
 
 
+def _withdraw_service_request(request, client, pk):
+    """Delete a request from the customer workspace without losing the record."""
+    try:
+        _, payload, _ = client.delete(replace_path('/services/requests/{pk}/', pk=pk))
+    except APIError as exc:
+        handle_api_error(request, exc)
+        return False
+    label = 'Request #%s' % pk
+    messages.success(
+        request,
+        f'{label} was removed from your requests. It is kept on record for your history.',
+    )
+    return True
+
+
+def _request_action(request):
+    """Resolve which button submitted a request form."""
+    action = str(request.POST.get('action', '') or '').strip()
+    if action:
+        return action
+    if request.POST.get('_delete'):
+        return 'delete'
+    if request.POST.get('_edit'):
+        return 'edit'
+    return ''
+
+
 @api_guard
 def service_requests(request):
     client = APIClient(request)
+    if request.method == 'POST' and _request_action(request) == 'delete':
+        request_id = str(request.POST.get('request_id', '') or '').strip()
+        if not request_id.isdigit():
+            messages.error(request, 'That request could not be found.')
+        else:
+            _withdraw_service_request(request, client, request_id)
+        return redirect('service-requests')
     if request.method == 'POST':
         request.session[PENDING_REQUEST_DRAFT_SESSION_KEY] = _safe_service_request_draft(request.POST)
         request.session.modified = True
@@ -2785,7 +2876,7 @@ def service_requests(request):
         if form.is_valid():
             payload = _service_request_payload(form.cleaned_data, catalog.get('locations', []))
             if payload is None:
-                form.add_error('location_id', 'That location is no longer in the marketplace catalogue. Please choose it again.')
+                form.add_error('location_area_filter', 'That location is no longer in the marketplace catalogue. Please choose it again.')
             else:
                 try:
                     _, item, _ = client.post(
@@ -2823,7 +2914,8 @@ def service_requests(request):
         'customer/requests.html',
         requests=items,
         form=form,
-        catalog_ready=(len(form.fields['service_name'].choices) > 1 and len(form.fields['location_id'].choices) > 1),
+        request_catalogue=_request_picker_catalogue(form),
+        catalog_ready=(len(form.fields['service_name'].choices) > 1),
         request_total=total,
         next_url=_query_url(base_url, {'offset': offset + SERVICE_REQUEST_PAGE_SIZE}) if offset + SERVICE_REQUEST_PAGE_SIZE < total else '',
         previous_url=_query_url(base_url, {'offset': max(0, offset - SERVICE_REQUEST_PAGE_SIZE)}) if offset else '',
@@ -2844,7 +2936,11 @@ def _load_service_request_responses(request, client, pk):
         items = extract_items(payload)
         total = _count_from_payload(payload)
     except APIError as exc:
-        handle_api_error(request, exc)
+        # The marketplace API does not expose responses for every request (yet);
+        # a missing or forbidden collection simply means "nobody to show" and
+        # must not replace the request page with a global error notice.
+        if exc.status_code not in {403, 404}:
+            handle_api_error(request, exc)
         items, total = [], 0
     path = reverse('service-request-responders', kwargs={'pk': pk})
     pager_base = {**filters}
@@ -2863,11 +2959,19 @@ def service_request_detail(request, pk, focus_responders=False):
         handle_api_error(request, exc)
         return redirect('service-requests')
 
+    if item.get('status', 'OPEN') != 'OPEN':
+        messages.info(request, 'This request is no longer active. Its reference is retained in the marketplace records.')
+        return redirect('service-requests')
+
     catalog = _request_form_catalog(request, client)
     location_id = _location_id_for_service(item.get('location'), catalog.get('locations', []))
+    item_location = item.get('location') or {}
     initial = {
         **item,
         'location_id': location_id,
+        'location_country_filter': item_location.get('country') or '',
+        'location_state_filter': item_location.get('state') or '',
+        'location_area_filter': item_location.get('area') or '',
         'preferred_date': item.get('preferred_date') or '',
     }
     if request.method == 'GET' and request.GET.get('resume') == 'draft':
@@ -2875,6 +2979,9 @@ def service_request_detail(request, pk, focus_responders=False):
         if isinstance(saved_draft, dict):
             initial.update(saved_draft)
     action = request.POST.get('action', 'update') if request.method == 'POST' else ''
+    if request.method == 'POST' and _request_action(request) == 'delete':
+        _withdraw_service_request(request, client, pk)
+        return redirect('service-requests')
     if request.method == 'POST' and action == 'start_conversation':
         artisan_id = str(request.POST.get('artisan_id') or '').strip()
         if not artisan_id:
@@ -2922,7 +3029,7 @@ def service_request_detail(request, pk, focus_responders=False):
         if form.is_valid():
             payload = _service_request_payload(form.cleaned_data, catalog.get('locations', []))
             if payload is None:
-                form.add_error('location_id', 'That location is no longer in the marketplace catalogue. Please choose it again.')
+                form.add_error('location_area_filter', 'That location is no longer in the marketplace catalogue. Please choose it again.')
             else:
                 try:
                     _, item, _ = client.patch(path, payload)
@@ -2940,6 +3047,7 @@ def service_request_detail(request, pk, focus_responders=False):
         'customer/request_detail.html',
         item=item,
         form=form,
+        request_catalogue=_request_picker_catalogue(form),
         responders=responders,
         responder_total=responder_total,
         responder_filters=responder_filters,
@@ -2960,7 +3068,8 @@ def artisan_requests(request):
         key: str(request.GET.get(key, '') or '').strip()
         for key in ARTISAN_REQUEST_FILTERS
     }
-    filters['ordering'] = filters.get('ordering') or 'newest'
+    if request.method == 'GET' and not request.GET:
+        filters['location_country'] = 'Nigeria'
     offset = _safe_page_offset(request.GET.get('offset'))
     list_path = '/services/artisan/requests/'
 
@@ -2969,6 +3078,12 @@ def artisan_requests(request):
         raw_id = str(request.POST.get('request_id') or '').strip()
         if not raw_id.isdigit():
             messages.error(request, 'The service request reference is invalid.')
+        elif action == 'dismiss':
+            try:
+                client.post(f'/services/artisan/requests/{raw_id}/dismiss/', {})
+                messages.success(request, 'Request hidden from your matches only. Other eligible artisans can still respond.')
+            except APIError as exc:
+                handle_api_error(request, exc)
         elif action == 'respond':
             try:
                 client.post(
@@ -3005,22 +3120,75 @@ def artisan_requests(request):
     except APIError as exc:
         handle_api_error(request, exc)
         items, total = [], 0
+    for item in items:
+        age = item.get('age_seconds')
+        if age is None and item.get('created_at'):
+            try:
+                posted = datetime.fromisoformat(str(item['created_at']).replace('Z', '+00:00'))
+                if timezone.is_naive(posted):
+                    posted = timezone.make_aware(posted)
+                age = (timezone.now() - posted).total_seconds()
+            except (TypeError, ValueError):
+                age = None
+        try:
+            age = max(0, int(age))
+        except (ValueError, TypeError, OverflowError):
+            age = None
+        item['age_seconds'] = age if age is not None else ''
+        item['request_age_label'] = _matched_request_age_label(age)
     base_url = reverse('artisan-requests')
+    filters['filters_applied'] = '1'
     previous_url = _query_url(base_url, {**filters, 'offset': max(0, offset - SERVICE_REQUEST_PAGE_SIZE)}) if offset else ''
     next_url = _query_url(base_url, {**filters, 'offset': offset + SERVICE_REQUEST_PAGE_SIZE}) if offset + SERVICE_REQUEST_PAGE_SIZE < total else ''
     return page(
         request,
         'artisan/requests.html',
+        filter_catalogue=_matched_request_picker_catalogue(request, client),
         role='artisan',
         requests=items,
         request_total=total,
         filters=filters,
-        has_active_filters=any(filters[key] for key in ARTISAN_REQUEST_FILTERS if key != 'ordering') or filters.get('ordering') != 'newest',
+        has_active_filters=any(filters.get(key) for key in ARTISAN_REQUEST_FILTERS),
         previous_url=previous_url,
         next_url=next_url,
         return_to=request.get_full_path(),
         page_js_path='',
     )
+
+
+def institution_catalogue(request):
+    """Shared read-only catalogue proxy for every frontend location picker."""
+    if request.method != 'GET':
+        return JsonResponse({'detail': 'Use GET.'}, status=405)
+    params = {key: str(request.GET.get(key) or '')[:180] for key in ('country', 'state', 'area', 'q', 'id', 'offset') if request.GET.get(key)}
+    params['limit'] = 50
+    try:
+        _, payload, _ = APIClient(request).get('/services/institutions/', params=params)
+        return JsonResponse(payload, safe=isinstance(payload, dict))
+    except APIError as exc:
+        return JsonResponse({'detail': 'The institution catalogue is temporarily unavailable. Please retry.'}, status=exc.status_code or 503)
+
+
+def _matched_request_age_label(seconds):
+    if seconds is None:
+        return 'Time unavailable'
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, seconds = divmod(rest, 60)
+    return ((f'{days}d ' if days else '') + (f'{hours}h ' if days or hours else '') +
+            (f'{minutes}m ' if days or hours or minutes else '') + f'{seconds}s')
+
+
+def _matched_request_picker_catalogue(request, client):
+    from .geography import world_geography
+    result = {'geography': world_geography()}
+    try:
+        _, payload, _ = client.get('/services/service_cat/')
+        result['services'] = extract_items(payload)
+    except APIError as exc:
+        handle_api_error(request, exc)
+        result['services'] = []
+    return result
 
 
 # ---------------- Artisan services ----------------

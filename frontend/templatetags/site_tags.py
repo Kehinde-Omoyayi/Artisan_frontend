@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 from django import template
 from django.templatetags.static import static
 from decimal import Decimal, InvalidOperation
@@ -168,3 +170,20 @@ def institution_label(value, institutions):
             return f"{name} — {campus}"
         return name or 'Selected institution'
     return 'Selected institution'
+
+
+@register.filter
+def human_date(value):
+    """Render an ISO date (or date object) as "19 Oct 2026"; pass anything else through."""
+    if not value:
+        return ''
+    if isinstance(value, datetime):
+        return f"{value.day} {value.strftime('%b %Y')}"
+    if isinstance(value, date):
+        return f"{value.day} {value.strftime('%b %Y')}"
+    text = str(value).strip()
+    try:
+        parsed = date.fromisoformat(text[:10])
+    except ValueError:
+        return text
+    return f"{parsed.day} {parsed.strftime('%b %Y')}"

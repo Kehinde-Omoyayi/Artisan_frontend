@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
-{% load static %}
+{% load static site_tags %}
 {% block title %}Request {{ item.id }} · Artisan Market{% endblock %}
-{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% asset 'css/artisan-pages.css' %}"><link rel="stylesheet" href="{% asset 'css/request-actions.css' %}">{% endblock %}
 {% block content %}
 <section class="artisan-motion-page workflow-page request-workflow-page request-detail-page" data-artisan-page="request-detail"{% if focus_responders %} data-focus-responders="true"{% endif %}>
   <header class="page-heading artisan-page-heading workflow-heading workflow-detail-heading" data-artisan-reveal data-motion="left">
@@ -18,17 +18,34 @@
   </header>
 
   <div class="workflow-detail-layout request-detail-layout">
-    <article class="panel workflow-panel workflow-form-panel request-edit-panel" aria-labelledby="request-edit-title" data-artisan-reveal data-motion="left">
+    <article class="panel workflow-panel workflow-form-panel request-edit-panel" id="request-editor" aria-labelledby="request-edit-title" data-artisan-reveal data-motion="left">
       <div class="workflow-panel-head">
         <div><span class="artisan-panel-kicker">Request editor</span><h2 id="request-edit-title">Update your request</h2></div>
         <span class="workflow-panel-icon workflow-panel-icon-request" aria-hidden="true">✎</span>
       </div>
-      <p class="workflow-panel-intro">Changes are sent to the marketplace API and shared with artisans who match the request.</p>
-      <form method="post" class="workflow-form js-submit-form" data-artisan-form>
-        <input type="hidden" name="action" value="update">
-        {% include 'partials/form.html' %}
-        <button class="button button-primary workflow-submit" type="submit" data-artisan-action>Save changes <span aria-hidden="true">→</span></button>
-      </form>
+      {% if item.status and item.status != 'OPEN' %}
+        <div class="request-status-note" role="status">
+          <strong>{% if item.status == 'ARCHIVED' %}This request has been withdrawn{% else %}This request has been attended to{% endif %}.</strong>
+          <span>It no longer appears in your request list. The record is still kept in the marketplace for your history and reporting.</span>
+        </div>
+        <div class="request-record-actions">
+          <a class="button button-secondary" href="{% url 'service-requests' %}">Back to all requests</a>
+        </div>
+      {% else %}
+        <p class="workflow-panel-intro">Changes are sent to the marketplace API and every artisan serving this category and area is notified.</p>
+        <form method="post" class="workflow-form js-submit-form" data-artisan-form>
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update">
+          {% include 'partials/request_form_fields.html' %}
+          <button class="button button-primary workflow-submit" type="submit" data-artisan-action>Save changes <span aria-hidden="true">→</span></button>
+        </form>
+        <form method="post" class="js-confirm-form request-record-actions" data-confirm="Delete this request? It will be removed from your list and kept on record for your history.">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete">
+          <button class="button button-danger" type="submit" data-artisan-action>Delete request</button>
+          <span class="request-record-hint">Removed from your list, kept on record.</span>
+        </form>
+      {% endif %}
     </article>
 
     <aside class="panel workflow-panel request-summary-panel" aria-labelledby="request-summary-title" data-artisan-reveal data-motion="right">
@@ -41,13 +58,11 @@
         <div><small>Service category</small><strong>{{ item.category_name|default:'Service request' }}</strong></div>
       </div>
       {% if item.service_name %}<div class="request-summary-line"><span>Service</span><strong>{{ item.service_name }}</strong></div>{% endif %}
-      <div class="request-summary-line"><span>Preferred date</span><strong>{{ item.preferred_date|default:'Not set' }}</strong></div>
-      {% if item.preferred_time_start or item.preferred_time_end or item.preferred_time_note %}<div class="request-summary-line"><span>Preferred time</span><strong>{% if item.preferred_time_start %}{{ item.preferred_time_start|slice:':5' }}{% endif %}{% if item.preferred_time_start and item.preferred_time_end %}–{% endif %}{% if item.preferred_time_end %}{{ item.preferred_time_end|slice:':5' }}{% endif %}{% if item.preferred_time_note %}{% if item.preferred_time_start or item.preferred_time_end %} · {% endif %}{{ item.preferred_time_note }}{% endif %}</strong></div>{% endif %}
+      <div class="request-summary-line"><span>Preferred date</span><strong>{{ item.preferred_date|human_date|default:'Not set' }}</strong></div>
       <div class="request-summary-line"><span>Urgency</span><strong>{{ item.urgency|default:'Not set'|title }}</strong></div>
-      <div class="request-summary-line"><span>Budget</span><strong>{% if item.budget != None %}₦{{ item.budget }}{% else %}Open budget{% endif %}</strong></div>
+      <div class="request-summary-line"><span>Budget</span><strong>{% if item.budget != None %}₦{{ item.budget|floatformat:"2g" }}{% else %}Open budget{% endif %}</strong></div>
       <div class="request-summary-line request-summary-location"><span>Location</span><strong>{% if item.location.area %}{{ item.location.area }}{% endif %}{% if item.location.state %}{% if item.location.area %}, {% endif %}{{ item.location.state }}{% endif %}{% if item.location.country %}{% if item.location.area or item.location.state %}, {% endif %}{{ item.location.country }}{% endif %}{% if not item.location.area and not item.location.state and not item.location.country %}Not provided{% endif %}</strong></div>
       <div class="request-summary-description"><span>Description</span><p>{{ item.description|default:'No description provided.' }}</p></div>
-      {% if item.additional_details %}<div class="request-summary-description"><span>Additional job details</span><p>{{ item.additional_details }}</p></div>{% endif %}
       <a class="workflow-subtle-link" href="{% url 'service-requests' %}">Back to all requests <span aria-hidden="true">→</span></a>
     </aside>
   </div>
@@ -59,13 +74,67 @@
     </header>
     <p class="workflow-list-intro">Only eligible artisans who explicitly responded to this request appear here. You can keep more than one conversation open while comparing offers; the booking flow controls final selection.</p>
 
-    <form class="responder-filter-form" method="get" action="{% url 'service-request-responders' pk=item.id %}#responders" aria-label="Filter artisan responses">
-      <label>Search artisans<input class="field-input" type="search" name="q" value="{{ responder_filters.q }}" placeholder="Name, business or profile"></label>
-      <label>State<input class="field-input" type="text" name="state" value="{{ responder_filters.state }}" placeholder="Any state"></label>
-      <label>Area<input class="field-input" type="text" name="area" value="{{ responder_filters.area }}" placeholder="Any area"></label>
-      <label>Minimum rating<input class="field-input" type="number" name="min_rating" min="0" max="5" step="0.1" value="{{ responder_filters.min_rating }}" placeholder="0–5"></label>
-      <label>Sort by<select class="field-input" name="ordering"><option value="newest"{% if responder_filters.ordering == 'newest' %} selected{% endif %}>Most recent</option><option value="rating"{% if responder_filters.ordering == 'rating' %} selected{% endif %}>Highest rated</option><option value="experience"{% if responder_filters.ordering == 'experience' %} selected{% endif %}>Most experienced</option><option value="completion"{% if responder_filters.ordering == 'completion' %} selected{% endif %}>Completion rate</option></select></label>
-      <div class="responder-filter-actions"><button class="button button-primary button-small" type="submit">Apply filters</button><a class="button button-secondary button-small" href="{% url 'service-request-responders' pk=item.id %}#responders">Reset</a></div>
+    <form class="request-responder-filters" method="get" action="{% url 'service-request-responders' pk=item.id %}#responders" aria-label="Filter artisan responses" data-responder-filters>
+      <div class="request-responder-search">
+        <input type="search" name="q" value="{{ responder_filters.q }}" placeholder="Search by name, business or profile" aria-label="Search artisans">
+      </div>
+      <div class="request-pick-options-sink" data-responder-rows>
+        <section class="request-pick" data-request-row data-pick-key="state">
+          <button class="request-pick-head" type="button" data-pick-toggle aria-expanded="false" aria-controls="responder-pick-state">
+            <span class="request-pick-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="M9 4.5 3.8 6.7v12.8L9 17.3l6 2.2 5.2-2.2V4.5L15 6.7 9 4.5Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.6"/></svg></span>
+            <span class="request-pick-label">State or region</span>
+            <span class="request-pick-value{% if not responder_filters.state %} is-placeholder{% endif %}" data-pick-value>{% if responder_filters.state %}{{ responder_filters.state }}{% else %}Any state{% endif %}</span>
+            <span class="request-pick-chevron" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+          </button>
+          <div class="request-pick-body" id="responder-pick-state" data-pick-body hidden>
+            <input type="hidden" name="state" value="{{ responder_filters.state }}" data-responder-input="state">
+            <div class="request-pick-options" role="listbox" aria-label="State or region" data-responder-options="state"></div>
+          </div>
+        </section>
+
+        <section class="request-pick" data-request-row data-pick-key="area">
+          <button class="request-pick-head" type="button" data-pick-toggle aria-expanded="false" aria-controls="responder-pick-area">
+            <span class="request-pick-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="M12 21s6.4-5.6 6.4-10.2A6.4 6.4 0 0 0 5.6 10.8C5.6 15.4 12 21 12 21Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.6"/><circle cx="12" cy="10.6" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+            <span class="request-pick-label">Area or locality</span>
+            <span class="request-pick-value{% if not responder_filters.area %} is-placeholder{% endif %}" data-pick-value>{% if responder_filters.area %}{{ responder_filters.area }}{% else %}Any area{% endif %}</span>
+            <span class="request-pick-chevron" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+          </button>
+          <div class="request-pick-body" id="responder-pick-area" data-pick-body hidden>
+            <input type="hidden" name="area" value="{{ responder_filters.area }}" data-responder-input="area">
+            <div class="request-pick-options" role="listbox" aria-label="Area or locality" data-responder-options="area"></div>
+          </div>
+        </section>
+
+        <section class="request-pick" data-request-row data-pick-key="rating">
+          <button class="request-pick-head" type="button" data-pick-toggle aria-expanded="false" aria-controls="responder-pick-rating">
+            <span class="request-pick-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.6-4.8 2.6.9-5.4L4.2 9.7l5.4-.8L12 4Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.6"/></svg></span>
+            <span class="request-pick-label">Minimum rating</span>
+            <span class="request-pick-value{% if not responder_filters.min_rating %} is-placeholder{% endif %}" data-pick-value>{% if responder_filters.min_rating %}{{ responder_filters.min_rating }}+{% else %}Any rating{% endif %}</span>
+            <span class="request-pick-chevron" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+          </button>
+          <div class="request-pick-body" id="responder-pick-rating" data-pick-body hidden>
+            <input type="hidden" name="min_rating" value="{{ responder_filters.min_rating }}" data-responder-input="min_rating">
+            <div class="request-pick-options" role="listbox" aria-label="Minimum rating" data-responder-options="rating"></div>
+          </div>
+        </section>
+
+        <section class="request-pick" data-request-row data-pick-key="ordering">
+          <button class="request-pick-head" type="button" data-pick-toggle aria-expanded="false" aria-controls="responder-pick-ordering">
+            <span class="request-pick-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="M6 5v14M6 5l-2.4 2.4M6 5l2.4 2.4M18 19V5M18 19l-2.4-2.4M18 19l2.4-2.4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg></span>
+            <span class="request-pick-label">Sort by</span>
+            <span class="request-pick-value" data-pick-value>{% if responder_filters.ordering == 'rating' %}Highest rated{% elif responder_filters.ordering == 'experience' %}Most experienced{% elif responder_filters.ordering == 'completion' %}Completion rate{% else %}Most recent{% endif %}</span>
+            <span class="request-pick-chevron" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+          </button>
+          <div class="request-pick-body" id="responder-pick-ordering" data-pick-body hidden>
+            <input type="hidden" name="ordering" value="{{ responder_filters.ordering|default:'newest' }}" data-responder-input="ordering">
+            <div class="request-pick-options" role="listbox" aria-label="Sort by" data-responder-options="ordering"></div>
+          </div>
+        </section>
+      </div>
+      <div class="request-responder-actions">
+        <button class="button button-primary button-small" type="submit">Apply filters</button>
+        <a class="button button-secondary button-small" href="{% url 'service-request-responders' pk=item.id %}#responders">Reset</a>
+      </div>
     </form>
 
     {% if responders %}
@@ -103,4 +172,4 @@
   </section>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script>{% endblock %}
+{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script>{% page_script 'js/request-pickers.js' %}{% endblock %}

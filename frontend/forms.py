@@ -2,6 +2,7 @@ import json
 import re
 
 from django import forms
+from django.utils import timezone
 
 from .phone_fields import (
     DEFAULT_CALLING_CODE,
@@ -221,18 +222,20 @@ class CustomerProfileForm(StyledForm):
         help_text='Choose a calling code. Nigerian numbers work with or without the leading 0.',
         widget=forms.TextInput(attrs={'data-phone-number': '', 'autocomplete': 'tel-national', 'inputmode': 'tel'}),
     )
-    date_of_birth = forms.DateField(required=False, widget=forms.DateInput(attrs={'type':'date'}))
+    date_of_birth = forms.DateField(required=False, widget=forms.DateInput(format='%Y-%m-%d', attrs={'type':'text', 'placeholder':'YYYY-MM-DD', 'autocomplete':'bday'}))
     country = forms.CharField(
         max_length=100,
         required=False,
-        widget=forms.TextInput(attrs={'data-geography-country': 'profile-location', 'data-geography-default': 'NG'}),
+        widget=forms.TextInput(),
     )
     state = forms.CharField(
+        label='State or region',
         max_length=100,
         required=False,
-        widget=forms.TextInput(attrs={'data-geography-state': 'profile-location'}),
+        widget=forms.TextInput(),
     )
-    area = forms.CharField(max_length=150, required=False, help_text='Enter your area or locality; no unverified locality list is used.')
+    area = forms.CharField(label='Area or locality', max_length=150, required=False, help_text='Choose your area or locality from the shared worldwide catalogue.')
+    nearest_institution = forms.UUIDField(required=False, label='Nearest institution', help_text='Optional. Select a nearby institution from the shared catalogue.', widget=forms.TextInput(attrs={'data-institution-name': ''}))
     gender = forms.ChoiceField(choices=[('M','Male'),('F','Female'),('N','Prefer not to say')])
     profile_photo = forms.ImageField(required=False, help_text='Optional profile photo for service conversations.')
 
@@ -241,6 +244,12 @@ class CustomerProfileForm(StyledForm):
         initialize_phone_fields(self)
         if not str(self.initial.get('country') or '').strip():
             self.initial['country'] = 'Nigeria'
+
+    def clean_date_of_birth(self):
+        value = self.cleaned_data.get('date_of_birth')
+        if value and value > timezone.localdate():
+            raise forms.ValidationError('Date of birth cannot be in the future.')
+        return value
 
     def clean(self):
         return clean_phone_fields(self, super().clean())
@@ -267,14 +276,16 @@ class ArtisanProfileForm(StyledForm):
     country = forms.CharField(
         max_length=100,
         required=False,
-        widget=forms.TextInput(attrs={'data-geography-country': 'profile-location', 'data-geography-default': 'NG'}),
+        widget=forms.TextInput(),
     )
     state = forms.CharField(
+        label='State or region',
         max_length=100,
         required=False,
-        widget=forms.TextInput(attrs={'data-geography-state': 'profile-location'}),
+        widget=forms.TextInput(),
     )
-    area = forms.CharField(max_length=150, required=False, help_text='Enter your area or locality; no unverified locality list is used.')
+    area = forms.CharField(label='Area or locality', max_length=150, required=False, help_text='Choose your locality from the shared worldwide catalogue.')
+    nearest_institution = forms.UUIDField(required=False, label='Nearest institution', help_text='Optional. Choose an institution in your selected locality.')
     profile_photo = forms.ImageField(required=False)
     social_media_1_platform = forms.ChoiceField(
         label='Social Media Link 1 platform',
@@ -465,48 +476,45 @@ class OTPOnlyForm(StyledForm):
     otp = forms.RegexField(regex=r'^\d{6}$', min_length=6, max_length=6)
 
 class ServiceRequestForm(StyledForm):
+    """Customer service request.
+
+    Deliberately short: catalogue (category/service), one location (country >
+    state > area) and the few details an artisan actually needs. Time
+    preferences, additional job details and a separate "service location"
+    dropdown were removed as duplicate information.
+    """
+
+    # Rendered by the custom glass pickers; the value lives in a hidden input.
     category_name = forms.ChoiceField(
         label='Category',
-        choices=[('', 'Select a service category')],
+        choices=[('', 'Choose a category')],
+        widget=forms.HiddenInput(),
     )
     service_name = forms.ChoiceField(
         label='Service',
-        choices=[('', 'Choose a service')],
+        choices=[('', 'Choose a category first')],
+        widget=forms.HiddenInput(),
     )
     location_country_filter = forms.CharField(
-        label='Location country',
-        max_length=100,
-        required=False,
-        widget=forms.TextInput(attrs={'data-geography-country': 'catalogue-location', 'data-geography-default': 'NG', 'data-location-country-filter': ''}),
+        label='Country', max_length=100, required=False,
+        widget=forms.HiddenInput(),
     )
     location_state_filter = forms.CharField(
-        label='Location state or region',
-        max_length=100,
-        required=False,
-        widget=forms.TextInput(attrs={'data-geography-state': 'catalogue-location', 'data-location-state-filter': ''}),
+        label='State or region', max_length=100, required=False,
+        widget=forms.HiddenInput(),
     )
-    location_id = forms.ChoiceField(
-        label='Service location',
-        choices=[('', 'Select an existing location')],
-        help_text='Areas are taken only from current marketplace locations.',
+    location_area_filter = forms.CharField(
+        label='Area or locality', max_length=150, required=False,
+        widget=forms.HiddenInput(),
     )
+    # Resolved from country/state/area in clean(); never entered by the customer.
+    location_id = forms.CharField(required=False, widget=forms.HiddenInput())
     preferred_date = forms.DateField(
         label='Preferred date',
-        widget=forms.DateInput(attrs={'type': 'date'}),
-    )
-    preferred_time_start = forms.TimeField(
-        label='Preferred time from (optional)', required=False,
-        widget=forms.TimeInput(attrs={'type': 'time'}),
-    )
-    preferred_time_end = forms.TimeField(
-        label='Preferred time until (optional)', required=False,
-        widget=forms.TimeInput(attrs={'type': 'time'}),
-    )
-    preferred_time_note = forms.CharField(
-        label='Time preference (optional)', max_length=100, required=False,
-        help_text='For example, morning or after work.',
+        widget=forms.HiddenInput(attrs={'data-request-date-value': ''}),
     )
     urgency = forms.ChoiceField(
+        label='Urgency',
         choices=[
             ('LOW', 'Low'),
             ('NORMAL', 'Normal'),
@@ -514,35 +522,43 @@ class ServiceRequestForm(StyledForm):
             ('EMERGENCY', 'Emergency'),
         ],
         initial='NORMAL',
+        widget=forms.HiddenInput(),
     )
     budget = forms.DecimalField(
         max_digits=12,
         decimal_places=2,
         min_value=0,
         required=False,
+        label='Budget',
         help_text='Optional. Leave blank if you are open to a quote.',
     )
     description = forms.CharField(
+        label='Description',
         max_length=10000,
-        widget=forms.Textarea(attrs={'rows': 5}),
-    )
-    additional_details = forms.CharField(
-        label='Additional job details (optional)', max_length=5000, required=False,
-        widget=forms.Textarea(attrs={'rows': 3}),
+        widget=forms.Textarea(attrs={'rows': 5, 'placeholder': 'Describe the job, the problem and anything the artisan should bring.'}),
     )
 
     def __init__(self, *args, categories=None, services=None, locations=None, **kwargs):
         super().__init__(*args, **kwargs)
         categories = categories or []
         services = services or []
-        locations = locations or []
-        _apply_location_controls(self, locations)
+        self.location_records = [
+            {
+                'id': str(item.get('id')),
+                'country': str(item.get('country') or '').strip(),
+                'state': str(item.get('state') or '').strip(),
+                'area': str(item.get('area') or '').strip(),
+            }
+            for item in locations
+            if isinstance(item, dict) and item.get('id')
+        ]
 
         category_names = sorted({
             str(item.get('name', '')).strip()
             for item in categories
             if isinstance(item, dict) and item.get('name')
         }, key=str.casefold)
+
         grouped_services = {}
         self.service_category_by_name = {}
         for item in services:
@@ -555,36 +571,60 @@ class ServiceRequestForm(StyledForm):
             grouped_services.setdefault(category, []).append(name)
             self.service_category_by_name[name] = category
 
-        self.fields['category_name'].choices = [('', 'Select a service category')] + [
+        for category in grouped_services:
+            if category not in category_names:
+                category_names.append(category)
+        category_names.sort(key=str.casefold)
+
+        self.fields['category_name'].choices = [('', 'Choose a category')] + [
             (name, name) for name in category_names
         ]
-        self.fields['service_name'].choices = [('', 'Choose a service')] + [
+        self.fields['service_name'].choices = [('', 'Choose a category first')] + [
             (category, [(name, name) for name in sorted(names, key=str.casefold)])
             for category, names in sorted(grouped_services.items(), key=lambda pair: pair[0].casefold())
         ]
 
-        location_choices = [('', 'Select an existing location')]
-        for item in locations:
-            if not isinstance(item, dict) or not item.get('id'):
-                continue
-            label = ', '.join(
-                str(item.get(field, '')).strip()
-                for field in ('area', 'state', 'country')
-                if str(item.get(field, '')).strip()
-            )
-            if label:
-                location_choices.append((str(item['id']), label))
-        self.fields['location_id'].choices = location_choices
-
     def clean(self):
         cleaned = super().clean()
+        preferred_date = cleaned.get('preferred_date')
+        if preferred_date and preferred_date < timezone.localdate():
+            self.add_error('preferred_date', 'Choose today or a later date.')
         category = cleaned.get('category_name')
         service = cleaned.get('service_name')
         actual_category = self.service_category_by_name.get(service)
         if service and category and actual_category != category:
             self.add_error('service_name', 'Choose a service from the selected category.')
-        cleaned.pop('location_country_filter', None)
-        cleaned.pop('location_state_filter', None)
+
+        country = str(cleaned.get('location_country_filter') or '').strip()
+        state = str(cleaned.get('location_state_filter') or '').strip()
+        area = str(cleaned.get('location_area_filter') or '').strip()
+        if country and state and area:
+            match = next(
+                (
+                    record for record in self.location_records
+                    if record['country'].casefold() == country.casefold()
+                    and record['state'].casefold() == state.casefold()
+                    and record['area'].casefold() == area.casefold()
+                ),
+                None,
+            )
+            if match is None:
+                from .geography import canonical_location
+                worldwide = canonical_location(country, state, area)
+                if worldwide is None:
+                    self.add_error('location_area_filter', 'Choose a country, state and area from the geographic catalogue.')
+                else:
+                    cleaned['location_id'] = ''
+                    for key, value in worldwide.items():
+                        cleaned[f'location_{key}_filter'] = value
+            else:
+                cleaned['location_id'] = match['id']
+        elif str(cleaned.get('location_id') or '').strip() in {record['id'] for record in self.location_records}:
+            # Callers that already post a catalogue id (older pages, API clients)
+            # keep working; the pickers simply send country/state/area instead.
+            cleaned['location_id'] = str(cleaned['location_id']).strip()
+        else:
+            self.add_error('location_area_filter', 'Choose a country, state and area for this request.')
         return cleaned
 
 class ArtisanServiceForm(StyledForm):

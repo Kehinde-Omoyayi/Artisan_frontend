@@ -14,8 +14,11 @@
   <link rel="stylesheet" href="{% asset 'css/site.css' %}">
   {% block head %}{% endblock %}
   <link rel="stylesheet" href="{% asset 'css/brand-overrides.css' %}">
+<link rel="stylesheet" href="{% asset 'css/site-experience.css' %}">
 </head>
 <body class="{% block body_class %}{% endblock %}" data-tour-role="{{ tour_role|default:nav_role|default:'guest' }}" data-tour-user="{{ tour_user_key|default:'guest' }}" data-tour-auto="{% if tour_auto_offer %}true{% else %}false{% endif %}" data-tour-manager="{% if platform_manager %}true{% else %}false{% endif %}" data-payment-notice-auto="{% if payment_notice_auto_offer %}true{% else %}false{% endif %}">
+<div class="experience-background" aria-hidden="true"><i></i><i></i></div>
+<button type="button" class="experience-motion-toggle" data-motion-toggle aria-pressed="true">Motion on</button>
 <a class="{% if is_landing_page %}landing-skip-link{% else %}site-skip-link{% endif %}" href="#main-content">Skip to content</a>
 {% block site_header %}{% include 'partials/navbar.html' %}{% endblock %}
 
@@ -110,6 +113,7 @@
   </section>
 </dialog>
 
+<script src="{% asset 'js/site-experience.js' %}"></script>
 <script src="{% asset 'js/api-errors.js' %}"></script>
 {% if include_geography %}
 <script src="{% asset 'js/data/geography.js' %}"></script>

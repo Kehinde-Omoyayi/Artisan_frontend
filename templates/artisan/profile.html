@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% load static site_tags %}
-{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}"><link rel="stylesheet" href="{% asset 'css/customer-profile-pickers.css' %}">{% endblock %}
 {% block title %}Artisan profile · Artisan Market{% endblock %}
 {% block content %}
 <section class="artisan-motion-page artisan-profile-page" data-artisan-page="profile" data-tour-target="account">
@@ -46,8 +46,9 @@
     <article id="artisan-profile-form" class="panel artisan-profile-form-panel" data-artisan-reveal data-motion="left">
       <div class="panel-head"><div><span class="artisan-panel-kicker">Profile editor</span><h2>Profile details</h2></div><span class="artisan-panel-mark" aria-hidden="true">✦</span></div>
       {% if profile_completion_required %}<div class="workflow-empty-catalog-note" role="status">Complete these profile fields before continuing: {{ missing_profile_fields|join:", " }}. This profile requirement is separate from artisan KYC verification.</div>{% endif %}
-      <form method="post" enctype="multipart/form-data" class="js-submit-form artisan-profile-form" data-artisan-form>
+      <form method="post" enctype="multipart/form-data" class="js-submit-form artisan-profile-form" data-artisan-form data-profile-pickers data-institutions-url="{% url 'institution-catalogue' %}" data-today="{{ profile_picker_today }}" data-institution-label="{{ profile.nearest_institution_name }}">
         {% if profile_completion_required and next_target %}<input type="hidden" name="next" value="{{ next_target }}">{% endif %}
+        {{ profile_picker_catalogue|json_script:'profile-geography-data' }}
         {% include 'partials/form.html' %}
         <button class="button button-primary artisan-form-submit" type="submit" data-artisan-action>Save profile</button>
       </form>
@@ -187,4 +188,4 @@
   </dialog>
 </section>
 {% endblock %}
-{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script><script src="{% static 'js/pages/profile-activity.js' %}"></script>{% endblock %}
+{% block scripts %}<script src="{% asset 'js/customer-profile-pickers.js' %}"></script><script src="{% static 'js/pages/artisan-ui.js' %}"></script><script src="{% static 'js/pages/profile-activity.js' %}"></script>{% endblock %}
