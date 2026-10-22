@@ -81,6 +81,18 @@
         </section>
       {% endif %}
 
+      {% if conversation.conversation_type == 'SERVICE' %}
+      <section id="booking-guidance" class="workflow-card" aria-label="What to do next" aria-live="polite" aria-atomic="true" {% if not conversation.guidance %}hidden{% endif %} style="padding:12px 16px;margin:0 0 12px;border-left:4px solid #96633e">
+        <span class="eyebrow">WHAT TO DO NEXT · <span data-guide-role>{{ conversation.guidance.role|title }}</span></span>
+        <strong data-guide-title style="display:block">{{ conversation.guidance.title }}</strong>
+        <p data-guide-message style="margin:6px 0">{{ conversation.guidance.message }}</p>
+        <details><summary>Steps and safety notes</summary><ul data-guide-steps>{% for step in conversation.guidance.steps %}<li>{{ step }}</li>{% endfor %}</ul><small>Guidance only. Actions still require the existing forms; chat text never confirms payment.</small></details>
+        <button type="button" class="button button-secondary button-small" data-guide-action {% if not conversation.guidance.action %}hidden{% endif %}>{{ conversation.guidance.action.label }}</button>
+        <small data-guide-status role="status"></small>
+      </section>
+      {{ conversation.guidance|json_script:"booking-guidance-data" }}
+      {% endif %}
+
       <div class="chat-workspace" data-artisan-reveal data-motion="scale">
         <div class="conversation-scroll-area" id="conversation-scroll-area">
         {% if conversation.conversation_type == 'SERVICE' and conversation.service_request or conversation.conversation_type == 'SERVICE' and conversation.request_draft %}
@@ -116,7 +128,7 @@
         </details>
         {% endif %}
 
-        <div class="chat-stream" id="conversation-stream" role="log" aria-label="Conversation messages" aria-live="off" data-conversation-id="{{ conversation.id }}" data-role="{{ conversation.viewer_role }}" data-viewer-id="{{ conversation.viewer_id|default:'' }}" data-unread-count="{{ conversation.unread_count }}" data-counterparty-avatar="{{ conversation.counterparty.profile_photo|default:'' }}" data-assistant-enabled="{% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request %}true{% else %}false{% endif %}" data-assistant-today="{{ assistant_today }}">
+        <div class="chat-stream" id="conversation-stream" role="log" aria-label="Conversation messages" aria-live="off" data-conversation-id="{{ conversation.id }}" data-role="{{ conversation.viewer_role }}" data-viewer-id="{{ conversation.viewer_id|default:'' }}" data-unread-count="{{ conversation.unread_count }}" data-counterparty-avatar="{{ conversation.counterparty.profile_photo|default:'' }}" data-assistant-enabled="{% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request and conversation.request_reference.status != 'CLOSED' %}true{% else %}false{% endif %}" data-assistant-today="{{ assistant_today }}">
           {% for item in conversation_messages %}
           <article class="chat-message {% if item.message_type == 'SYSTEM' %}system{% elif item.sender_id == conversation.viewer_id %}mine{% else %}theirs{% endif %}">
             {% if item.message_type != 'SYSTEM' and item.sender_id != conversation.viewer_id %}<span class="chat-message-avatar" aria-hidden="true">{% if conversation.counterparty.profile_photo %}<img src="{{ conversation.counterparty.profile_photo }}" alt="" data-profile-photo-image loading="lazy" referrerpolicy="no-referrer"><span data-profile-photo-fallback hidden>{{ item.sender_name|default:conversation.title|slice:':1'|upper }}</span>{% else %}<span data-profile-photo-fallback>{{ item.sender_name|default:conversation.title|slice:':1'|upper }}</span>{% endif %}</span>{% endif %}
@@ -127,6 +139,10 @@
                 {% if attachment.url %}
                   {% if attachment.content_type|slice:':6' == 'image/' %}
                   <a class="chat-attachment-image" href="{{ attachment.url }}" target="_blank" rel="noopener"><img src="{{ attachment.url }}" alt="Shared photo; open full size" loading="lazy"></a>
+                  {% elif attachment.content_type|slice:':6' == 'audio/' %}
+                  <audio controls preload="none" src="{{ attachment.url }}">Audio playback unavailable.</audio>
+                  {% elif attachment.content_type|slice:':6' == 'video/' %}
+                  <video controls preload="none" playsinline src="{{ attachment.url }}">Video playback unavailable.</video>
                   {% else %}
                   <a class="chat-attachment-file" href="{{ attachment.url }}" target="_blank" rel="noopener">Attachment · {{ attachment.content_type }}</a>
                   {% endif %}
@@ -138,7 +154,7 @@
           {% empty %}
           <div class="empty chat-empty-state">No messages yet. Start the conversation naturally — you can write a note or attach a photo.</div>
           {% endfor %}
-          {% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request and conversation.assistant %}
+          {% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request and conversation.request_reference.status != 'CLOSED' and conversation.assistant %}
           <article class="chat-message request-assistant-message" id="conversation-assistant" data-mode="{{ conversation.assistant.mode|default:'' }}" aria-label="Artisan Market guided request helper">
             <span class="assistant-chat-avatar" aria-hidden="true">AM</span>
             <div class="chat-bubble assistant-bubble">
@@ -184,7 +200,7 @@
         </div>
         {% endif %}
 
-        {% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request %}
+        {% if conversation.conversation_type == 'SERVICE' and conversation.viewer_role == 'customer' and not conversation.service_request and conversation.request_reference.status != 'CLOSED' %}
         <details class="request-assistant-card" id="request-assistant-card" data-request-assistant-card data-artisan-reveal>
           <summary class="request-assistant-head request-assistant-summary">
             <span><span class="eyebrow">REQUEST DETAILS · DRAFT ONLY</span><strong>Review or edit your request</strong></span>
@@ -313,13 +329,13 @@
             <div class="request-assistant-actions">
               <button class="button button-secondary" type="submit" name="action" value="request_draft" formnovalidate data-request-save-draft>Save draft</button>
               <button class="button button-secondary" type="button" data-request-review-button>Review before submitting</button>
-              <button class="button button-primary" type="submit" name="action" value="request_submit" data-request-submit>Submit request</button>
+              <button class="button button-primary" type="submit" name="action" value="request_submit" data-request-submit>Send Request</button>
             </div>
             <p class="request-submit-status" data-request-submit-status role="status" aria-live="polite"></p>
           </form>
           </div>
         </details>
-        <p class="request-assistant-save-status" data-request-save-status role="status" aria-live="polite">Draft only. Nothing is submitted until you review and choose Submit request; sync status will appear here.</p>
+        <p class="request-assistant-save-status" data-request-save-status role="status" aria-live="polite">Draft only. Nothing is submitted until you review and choose Send Request; sync status will appear here.</p>
         {% endif %}
 
         {% if 'SEND_OFFER' in conversation.available_actions %}
@@ -337,6 +353,12 @@
               <label>Scheduled start<input class="field-input" type="datetime-local" name="scheduled_start" required></label>
               <label>Scheduled end<input class="field-input" type="datetime-local" name="scheduled_end" required></label>
             </div>
+<div class="form-grid two"><label>Transport (₦)<input class="field-input" name="transport_amount" value="0" data-money-input inputmode="decimal" required></label><label>Additional charges (₦)<input class="field-input" name="additional_amount" value="0" data-money-input inputmode="decimal" required></label></div>
+<label>Materials covered by the quote<textarea class="field-input" name="materials_details" maxlength="1500" rows="2" placeholder="List the materials covered, or explicitly state None." required></textarea></label>
+<label>Additional charge breakdown<textarea class="field-input" name="additional_charge_details" maxlength="1500" rows="2"></textarea></label>
+<label>Payment terms<textarea class="field-input" name="payment_terms" maxlength="1500" rows="2" placeholder="State milestones and when payment is due. No payment is collected by sending this quote." required></textarea></label>
+<label>Exclusions<textarea class="field-input" name="exclusions" maxlength="1500" rows="2" placeholder="What is not included, or explicitly state None." required></textarea></label>
+<label>Workmanship / rectification terms<textarea class="field-input" name="workmanship_terms" maxlength="1500" rows="2" placeholder="State any terms you personally offer; do not imply a platform guarantee." required></textarea></label>
             <label>Offer expires<input class="field-input" type="datetime-local" name="expires_at" required></label>
             <label>Scope<textarea class="field-input" name="scope" rows="3" maxlength="5000" placeholder="Describe the work included in this offer." required></textarea></label>
             <label>Notes<textarea class="field-input" name="notes" rows="2" maxlength="3000" placeholder="Materials, access notes, assumptions, or exclusions."></textarea></label>
@@ -352,22 +374,30 @@
             <span class="valid-pill">Valid until <time class="workflow-local-time" datetime="{{ conversation.active_offer.expires_at }}" data-utc-time="{{ conversation.active_offer.expires_at }}">{{ conversation.active_offer.expires_at }}</time></span>
           </div>
           <p class="workflow-scope">{{ conversation.active_offer.scope }}</p>
+          <dl><dt>Quote version</dt><dd>{{ conversation.active_offer.version }}</dd><dt>Materials specification</dt><dd>{{ conversation.active_offer.materials_details|default:"Not specified in this legacy quote" }}</dd><dt>Duration</dt><dd>{{ conversation.active_offer.duration_minutes }} minutes</dd><dt>Transport</dt><dd>₦{{ conversation.active_offer.transport_amount }}</dd><dt>Additional charges</dt><dd>₦{{ conversation.active_offer.additional_amount }} · {{ conversation.active_offer.additional_charge_details|default:"None specified" }}</dd><dt>Payment terms</dt><dd>{{ conversation.active_offer.payment_terms|default:"Not specified in this legacy quote" }}</dd><dt>Exclusions</dt><dd>{{ conversation.active_offer.exclusions|default:"Not specified in this legacy quote" }}</dd><dt>Workmanship terms</dt><dd>{{ conversation.active_offer.workmanship_terms|default:"Not specified in this legacy quote" }}</dd><dt>Schedule / duration</dt><dd>{{ conversation.active_offer.scheduled_start }} — {{ conversation.active_offer.scheduled_end }} (the quoted service interval)</dd></dl>
           <div class="money-grid"><div><span>Labour</span><strong>₦{{ conversation.active_offer.labour_amount }}</strong></div><div><span>Materials</span><strong>₦{{ conversation.active_offer.materials_amount }}</strong></div><div><span>Materials included</span><strong>{% if conversation.active_offer.materials_included %}Yes{% else %}No{% endif %}</strong></div></div>
           {% if conversation.active_offer.notes %}<p class="muted">{{ conversation.active_offer.notes }}</p>{% endif %}
           <div class="offer-actions">
             {% if 'ACCEPT_OFFER' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="accept"><input type="hidden" name="offer_id" value="{{ conversation.active_offer.id }}"><button class="button button-primary" type="submit" data-artisan-action>Accept ₦{{ conversation.active_offer.total_amount }}</button></form>{% endif %}
+            {% if 'DECLINE_OFFER' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="revision"><input type="hidden" name="offer_id" value="{{ conversation.active_offer.id }}"><button class="button button-secondary" type="submit">Request a revised quote</button></form>{% endif %}
             {% if 'DECLINE_OFFER' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="decline"><input type="hidden" name="offer_id" value="{{ conversation.active_offer.id }}"><button class="button button-secondary" type="submit" data-artisan-action>Decline offer</button></form>{% endif %}
           </div>
         </section>
         {% endif %}
 
-        {% if 'COUNTER_OFFER' in conversation.available_actions and conversation.active_offer %}
+        {% if 'COUNTER_OFFER' in conversation.available_actions and conversation.active_offer or 'REVISE_OFFER' in conversation.available_actions and conversation.active_offer %}
         <details class="workflow-card details-card counter-offer-card" data-artisan-reveal>
-          <summary>Make a counter offer</summary>
+          <summary>Prepare a revised / counter quote</summary>
           <form method="post" class="workflow-form">
             {% csrf_token %}<input type="hidden" name="action" value="counter"><input type="hidden" name="parent_offer_id" value="{{ conversation.active_offer.id }}">
             <div class="form-grid three"><label>Labour (₦)<input class="field-input" name="labour_amount" value="{{ conversation.active_offer.labour_amount }}" data-money-input required></label><label>Materials (₦)<input class="field-input" name="materials_amount" value="{{ conversation.active_offer.materials_amount }}" data-money-input required></label><label>Total (₦)<input class="field-input" name="total_amount" value="{{ conversation.active_offer.total_amount }}" data-money-total required></label></div>
             <div class="form-grid two"><label>Scheduled start<input class="field-input" type="datetime-local" name="scheduled_start" value="{{ conversation.active_offer.scheduled_start_local }}" data-utc-value="{{ conversation.active_offer.scheduled_start }}" required></label><label>Scheduled end<input class="field-input" type="datetime-local" name="scheduled_end" value="{{ conversation.active_offer.scheduled_end_local }}" data-utc-value="{{ conversation.active_offer.scheduled_end }}" required></label></div>
+<div class="form-grid two"><label>Transport (₦)<input class="field-input" name="transport_amount" value="0" data-money-input inputmode="decimal" required></label><label>Additional charges (₦)<input class="field-input" name="additional_amount" value="0" data-money-input inputmode="decimal" required></label></div>
+<label>Materials covered by the quote<textarea class="field-input" name="materials_details" maxlength="1500" rows="2" placeholder="List the materials covered, or explicitly state None." required></textarea></label>
+<label>Additional charge breakdown<textarea class="field-input" name="additional_charge_details" maxlength="1500" rows="2"></textarea></label>
+<label>Payment terms<textarea class="field-input" name="payment_terms" maxlength="1500" rows="2" placeholder="State milestones and when payment is due. No payment is collected by sending this quote." required></textarea></label>
+<label>Exclusions<textarea class="field-input" name="exclusions" maxlength="1500" rows="2" placeholder="What is not included, or explicitly state None." required></textarea></label>
+<label>Workmanship / rectification terms<textarea class="field-input" name="workmanship_terms" maxlength="1500" rows="2" placeholder="State any terms you personally offer; do not imply a platform guarantee." required></textarea></label>
             <label>Offer expires<input class="field-input" type="datetime-local" name="expires_at" value="{{ conversation.active_offer.expires_at_local }}" data-utc-value="{{ conversation.active_offer.expires_at }}" required></label>
             <label>Scope<textarea class="field-input" name="scope" rows="3" maxlength="5000" required>{{ conversation.active_offer.scope }}</textarea></label>
             <label>Notes<textarea class="field-input" name="notes" rows="2" maxlength="3000">{{ conversation.active_offer.notes }}</textarea></label>
@@ -402,7 +432,7 @@
           <div class="workflow-actions">
             {% if 'START_BOOKING' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="start_booking"><button class="button button-primary" type="submit" data-artisan-action>Start service</button></form>{% endif %}
             {% if 'SUBMIT_COMPLETION' in conversation.available_actions %}<details class="inline-details"><summary>Mark service complete</summary><form method="post" class="workflow-form">{% csrf_token %}<input type="hidden" name="action" value="complete"><label>Completion note<textarea class="field-input" name="note" rows="2" maxlength="1000"></textarea></label><button class="button button-primary" type="submit" data-artisan-action>Submit completion</button></form></details>{% endif %}
-            {% if 'CONFIRM_COMPLETION' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="confirm_completion"><button class="button button-success" type="submit" data-artisan-action>Confirm completion</button></form>{% endif %}
+            {% if 'CONFIRM_COMPLETION' in conversation.available_actions %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="confirm_completion"><p class="media-retention-notice">Confirm that the service is finished and the agreed work has been delivered. When both the request and booking are completed, voice notes, audio recordings and video clips in this service room will be automatically deleted under the media retention policy. If there is a problem that needs support, raise it before confirming completion.</p><button class="button button-success" type="submit" data-artisan-action>Confirm completion</button></form>{% endif %}
             {% if 'REVIEW' in conversation.available_actions %}<a class="button button-primary" href="{% url 'review-create' %}?booking={{ conversation.booking.id }}" data-artisan-action>Review service</a>{% endif %}
             {% if conversation.booking %}<a class="workflow-text-link" href="{% url 'booking-detail' pk=conversation.booking.id %}">Booking details</a>{% endif %}
             {% if conversation.payment %}<a class="workflow-text-link" href="{% url 'payment-detail' payment_id=conversation.payment.id %}">Payment details</a>{% endif %}
@@ -517,6 +547,10 @@
 
         </div>
 
+        {% if conversation.request_reference %}<p class="media-retention-notice">Request #{{ conversation.request_reference.id }} · {{ conversation.request_reference.status }}. An unbooked request's audio/video is retained for seven days after you explicitly close it, then deleted unless a preservation hold applies. Drafts are not submitted requests.</p>{% endif %}
+        {% if conversation.viewer_role == 'customer' and not conversation.booking and conversation.request_reference.status == 'DRAFT' or conversation.viewer_role == 'customer' and not conversation.booking and conversation.request_reference.status == 'OPEN' or conversation.viewer_role == 'customer' and not conversation.booking and conversation.request_reference.status == 'ARCHIVED' %}
+        <form method="post" class="js-confirm-form" data-confirm="Close this unbooked request? Its audio/video will be deleted after seven days unless a preservation hold applies. Text and photos remain.">{% csrf_token %}<input type="hidden" name="action" value="request_close"><button type="submit" class="button button-secondary button-small">Close unbooked request</button></form>
+        {% endif %}
         <div class="chat-composer" data-artisan-reveal>
           <form method="post" enctype="multipart/form-data" id="conversation-message-form">
             {% csrf_token %}<input type="hidden" name="action" value="message">
@@ -524,7 +558,7 @@
               <label class="attachment-picker" for="conversation-attachments" aria-label="Attach photos or files">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 12.5 14.8 6a3.5 3.5 0 0 1 5 5l-8.5 8.5a5 5 0 0 1-7.1-7.1l8.2-8.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>
                 <span class="visually-hidden">Attach photos or files</span>
-                <input id="conversation-attachments" type="file" name="attachments" accept="image/*,.pdf" multiple hidden>
+                <input id="conversation-attachments" type="file" name="attachments" accept="image/*,.pdf{% if conversation.recording_enabled %},audio/webm,audio/ogg,audio/wav,audio/mpeg,audio/mp4,video/webm,video/mp4{% endif %}" multiple hidden>
               </label>
               <label class="visually-hidden" for="conversation-message-body">Message</label>
               <textarea class="field-input" id="conversation-message-body" name="body" rows="1" maxlength="5000" placeholder="Type your message…"></textarea>
@@ -532,6 +566,17 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 12 15-7-4.8 14-2.4-5.2L4 12Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/><path d="m11.8 13.8 7.2-8.8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>
               </button>
             </div>
+            {% if conversation.recording_enabled %}
+            <div class="voice-note-tools" data-voice-tools>
+              <button type="button" class="button button-secondary button-small" data-voice-record>Record voice note</button>
+              <button type="button" class="button button-secondary button-small" data-voice-stop hidden>Stop recording</button>
+              <span data-voice-status role="status" aria-live="polite">90 seconds maximum · 5 MB audio · 10 MB / 60 seconds video</span>
+              <audio data-voice-preview controls hidden></audio>
+              <button type="button" class="button button-secondary button-small" data-voice-discard hidden>Discard / re-record</button>
+            </div>
+            {% endif %}
+            <p class="media-retention-notice">Voice notes, audio recordings and video clips shared in this service room are automatically deleted from the platform’s active media storage and database references after both the service request and its booking are completed, unless an active dispute or lawful preservation hold requires the media to be preserved. Keep any copy you personally need before confirming completion. The platform cannot recover media after permanent deletion.</p>
+            <p class="media-retention-notice">Media cleanup: {{ conversation.media_purge_status|default:'NOT_ELIGIBLE' }}. Text and transaction records remain available.</p>
             <div class="attachment-preview" id="attachment-preview" aria-live="polite" hidden></div>
             <p class="chat-status" id="chat-status" aria-live="polite">Messages and attachments are sent securely through the marketplace.</p>
           </form>

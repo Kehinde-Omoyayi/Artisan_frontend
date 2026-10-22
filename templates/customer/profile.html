@@ -3,7 +3,7 @@
 {% block title %}{% if is_landing_page %}Customer home{% else %}Customer profile{% endif %} · Artisan Market{% endblock %}
 {% block body_class %}{% if is_landing_page %}landing-page authenticated-home-page{% endif %}{% endblock %}
 {% block main_class %}{% if is_landing_page %}landing-main authenticated-home-main{% else %}page-shell{% endif %}{% endblock %}
-{% block head %}
+{% block head %}<link rel="stylesheet" href="{% asset 'css/institution-picker.css' %}">
 {% if is_landing_page %}<link rel="stylesheet" href="{% static 'css/landing.css' %}">{% endif %}
 <link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">
 <link rel="stylesheet" href="{% asset 'css/customer-profile-pickers.css' %}">
@@ -33,7 +33,7 @@
       </header>
       <p class="workspace-card-intro">Keep your contact and location details current so artisans can coordinate with you.</p>
       {% if profile_completion_required %}<div class="workflow-empty-catalog-note" role="status">Complete these profile fields before continuing: {{ missing_profile_fields|join:", " }}. Your profile is needed to submit service requests and send marketplace messages.</div>{% endif %}
-      <form method="post" enctype="multipart/form-data" class="js-submit-form customer-profile-form" data-artisan-form data-profile-pickers data-institutions-url="{% url 'institution-catalogue' %}" data-today="{{ profile_picker_today }}" data-institution-label="{{ profile.nearest_institution_name }}">
+      <form method="post" enctype="multipart/form-data" class="js-submit-form customer-profile-form" data-artisan-form data-profile-pickers data-institutions-url="{% url 'institution-catalogue' %}" data-geography-url="{% asset 'data/world-geography.json' %}" data-catalogue-mode="frontend-text" data-today="{{ profile_picker_today }}" data-institution-label="{{ profile.nearest_institution_name }}">
         {% if profile_completion_required and next_target %}<input type="hidden" name="next" value="{{ next_target }}">{% endif %}
         {{ profile_picker_catalogue|json_script:'profile-geography-data' }}
         {% include 'partials/form.html' %}

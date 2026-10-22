@@ -1180,3 +1180,9 @@ body.conversation-shell-body {
   .request-assistant-summary strong { font-size: 11px; }
   .request-assistant-content { gap: 11px; padding: 12px; }
 }
+/* Read-only booking help stays above the independently scrolling chat. */
+#booking-guidance[hidden], #booking-guidance [hidden] { display: none !important; }
+#booking-guidance { flex-shrink: 0; font-size: 12px; }
+#booking-guidance summary { cursor: pointer; }
+#booking-guidance [data-guide-action] { margin-top: 8px; }
+#booking-guidance [data-guide-status] { display: block; margin-top: 4px; }

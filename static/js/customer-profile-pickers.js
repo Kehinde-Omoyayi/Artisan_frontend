@@ -5,6 +5,8 @@
   const data = document.getElementById('profile-geography-data');
   let geo;
   try { geo = JSON.parse(data.textContent); } catch (_) { return; }
+  // The server-rendered copy is a no-network fallback from the same static file.
+  if (form.dataset.geographyUrl) fetch(form.dataset.geographyUrl).then(r=>{if(!r.ok)throw Error('geography');return r.json();}).then(value=>{geo=value;}).catch(()=>{});
   const names = [...new Set(['phone_country_calling_code', 'country', 'state', 'area', 'nearest_institution', 'gender', 'date_of_birth', ...[...form.querySelectorAll('select[name]')].map(f=>f.name)])].filter(n=>form.elements.namedItem(n));
   const fields = Object.fromEntries(names.map(n => [n, form.elements.namedItem(n)]));
   const rows = {};
@@ -15,7 +17,7 @@
   const closeAll = () => Object.values(rows).forEach(r => { r.panel.hidden = true; r.toggle.setAttribute('aria-expanded', 'false'); });
   const labelFor = name => {
     const f = fields[name];
-    if (name === 'nearest_institution') return f.value ? (f.dataset.selectedLabel || form.dataset.institutionLabel || 'Saved institution') : 'Choose nearest institution';
+    if (name === 'nearest_institution') return f.value ? (f.dataset.selectedLabel || form.dataset.institutionLabel || [f.value,form.elements.namedItem('nearest_institution_abbreviation')?.value ? `(${form.elements.namedItem('nearest_institution_abbreviation').value})` : ''].filter(Boolean).join(' ')) : 'Choose nearest institution';
     if (f.tagName === 'SELECT') return f.selectedOptions[0]?.textContent || 'Choose an option';
     return f.value || (name === 'date_of_birth' ? 'Choose date of birth' : `Choose ${name}`);
   };
@@ -25,6 +27,13 @@
     assign(n, value, label);
     const downstream = {country:['state','area','nearest_institution'],state:['area','nearest_institution'],area:['nearest_institution']};
     (downstream[n] || []).forEach(key => assign(key, '', ''));
+    if (downstream[n] || (n==='nearest_institution' && !value)) {
+      controller?.abort();requestSerial++;
+      const abbreviation=form.elements.namedItem('nearest_institution_abbreviation');
+      if(abbreviation)abbreviation.value='';
+      const source=form.elements.namedItem('nearest_institution_source_id');
+      if(source)source.value='';
+    }
     closeAll(); rows[n].toggle.focus();
   };
   const localOptions = n => {
@@ -50,24 +59,33 @@
     if (!append) { controller?.abort(); controller = new AbortController(); requestSerial++; r.offset=0; r.list.replaceChildren(); }
     const serial = requestSerial;
     r.more.hidden = true;
-    if (!fields.country.value || !fields.state.value || !fields.area.value) { r.status.textContent='Choose Country, State/region and Area/locality first.'; return; }
     r.status.textContent='Loading institutions…';
-    const url = new URL(form.dataset.institutionsUrl, location.origin === 'null' ? 'https://preview.invalid' : location.href);
-    ['country','state','area'].forEach(key => url.searchParams.set(key,fields[key].value));
-    url.searchParams.set('q',r.search.value); url.searchParams.set('offset',r.offset || 0);
     try {
-      const response = await fetch(url, {signal:controller.signal,headers:{Accept:'application/json'}});
-      if (!response.ok) throw Error('catalogue');
-      const payload = await response.json();
+      const url = new URL(form.dataset.institutionsUrl, location.origin === 'null' ? 'https://preview.invalid/' : location.href);
+      if(r.localScope) ['country','state','area'].forEach(k=>{if(fields[k]?.value)url.searchParams.set(k,fields[k].value);});
+      url.searchParams.set('q',r.search.value);url.searchParams.set('offset',r.offset||0);
+      const response=await fetch(url,{signal:controller.signal,headers:{Accept:'application/json'}});
+      if(!response.ok)throw Error('catalogue');
+      const payload=await response.json();
       if (serial !== requestSerial) return;
       const items = Array.isArray(payload) ? payload : payload.results || [];
       items.forEach(o => {
-        const label = [o.name,o.abbreviation ? `(${o.abbreviation})` : '',o.campus].filter(Boolean).join(' ');
-        r.list.append(button(label, () => choose('nearest_institution',o.id,label),'profile-pick-option'));
+        const abbreviation=(o.abbreviations || [])[0] || '';
+        const label = [o.name,abbreviation ? `(${abbreviation})` : '',`· ${o.area}, ${o.state}, ${o.country}`].filter(Boolean).join(' ');
+        r.list.append(button(label, () => {
+          geo[o.country] ||= {};geo[o.country][o.state] ||= [];
+          if(!geo[o.country][o.state].includes(o.area))geo[o.country][o.state].push(o.area);
+          ['country','state','area'].forEach(key=>assign(key,o[key]||''));
+          choose('nearest_institution',o.name,label);
+          const source=form.elements.namedItem('nearest_institution_source_id');
+          if(source)source.value=o.source_id||o.id;
+          const field=form.elements.namedItem('nearest_institution_abbreviation');
+          if(field)field.value=abbreviation;
+        },'profile-pick-option'));
       });
       r.offset += items.length;
       r.more.hidden = !items.length || r.offset >= (payload.count || items.length);
-      r.status.textContent = r.offset ? `${r.offset} institutions shown.` : 'No registered institution matches this location/search. You may leave this optional field blank.';
+      r.status.textContent = r.offset ? `${r.offset} of ${payload.count} institutions shown.` : 'No institutions match. Try All institutions or another search.';
     } catch (error) { if (error.name !== 'AbortError' && serial === requestSerial) r.status.textContent='Unable to load institutions. Check your connection and retry.'; }
   }
   names.forEach(n => {
@@ -90,6 +108,18 @@
     const list=make('div','profile-pick-options');
     const status=make('p','profile-pick-status');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
     const more=button('Load more institutions',()=>institutions(true),'profile-pick-more');more.hidden=true;
+    if(n==='nearest_institution'){
+      const scope=make('div','institution-scope');
+      ['all','local'].forEach(mode=>{
+        const b=button(mode==='all'?'All institutions':'Use selected location',()=>{
+          rows[n].localScope=mode==='local';
+          scope.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+          institutions();
+        },'institution-scope-button');
+        b.dataset.institutionScope=mode;b.setAttribute('aria-pressed',String(mode==='all'));scope.append(b);
+      });
+      panel.append(scope,make('p','institution-picker-help','Search worldwide. Location is optional; choosing an institution fills its country, state and area.'));
+    }
     if(n!=='date_of_birth')panel.append(search,list,status,more);
     panel.append(button(n==='date_of_birth' ? 'Clear date' : 'Clear selection',()=>choose(n,'',''),'profile-pick-clear'));
     host.append(toggle,panel);f.after(host);

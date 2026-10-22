@@ -132,7 +132,6 @@ document.addEventListener('DOMContentLoaded', () => {
     else closePanel(true);
   });
   if (filterClose) filterClose.addEventListener('click', () => closePanel(true));
-  window.addEventListener('resize', () => { if (!filterPanel.hidden) fitPanelToViewport(); });
   if (filterScrim) filterScrim.addEventListener('click', () => closePanel(true));
 
   document.addEventListener('keydown', (event) => {
@@ -175,6 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
     current.classList.toggle('is-open', open);
     if (head) head.setAttribute('aria-expanded', String(open));
     if (body) body.hidden = !open;
+    if (key === 'institution_id' && open) loadInstitutions();
   };
 
   filterPanel.addEventListener('click', (event) => {
@@ -203,6 +203,8 @@ document.addEventListener('DOMContentLoaded', () => {
     locationRows = [];
   }
 
+  let worldGeo = null;
+  try { worldGeo = JSON.parse(document.getElementById('discovery-geography-data')?.textContent || 'null'); } catch (_) {}
   const allInstitutions = Array.from(
     (optionsBox('institution_id') || document).querySelectorAll('.artisan-filter-option[data-value]')
   )
@@ -212,7 +214,57 @@ document.addEventListener('DOMContentLoaded', () => {
       label: option.dataset.label || option.textContent.trim(),
       country: option.dataset.country || '',
       state: option.dataset.state || '',
+      area: option.dataset.area || '',
     }));
+
+  const institutionCache = new Map(allInstitutions.map(item=>[item.value,item]));
+  const institutionRow=row('institution_id');
+  const institutionSearch=filterPanel.querySelector('[data-institution-search]');
+  const institutionStatus=filterPanel.querySelector('[data-institution-status]');
+  const institutionMore=filterPanel.querySelector('[data-institution-more]');
+  let institutionLocal=false,institutionOffset=0,institutionSerial=0,institutionController,institutionTimer;
+  function ensureInstitutionGeography(item){
+    if(!worldGeo||!item)return;
+    worldGeo[item.country] ||= {};
+    worldGeo[item.country][item.state] ||= [];
+    if(!worldGeo[item.country][item.state].includes(item.area))worldGeo[item.country][item.state].push(item.area);
+  }
+  async function loadInstitutions(append=false){
+    if(!institutionRow?.dataset.institutionSearchUrl)return;
+    if(!append){institutionOffset=0;institutionController?.abort();institutionController=new AbortController();institutionSerial++;}
+    const serial=institutionSerial;
+    if(institutionMore)institutionMore.hidden=true;
+    if(institutionStatus)institutionStatus.textContent='Loading institutions…';
+    const url=new URL(institutionRow.dataset.institutionSearchUrl,location.origin==='null'?'https://preview.invalid/':location.href);
+    url.searchParams.set('q',institutionSearch?.value || '');url.searchParams.set('offset',institutionOffset);
+    if(institutionLocal)['country','state','area'].forEach(k=>{if(currentValue(k))url.searchParams.set(k,currentValue(k));});
+    try{
+      const response=await fetch(url,{signal:institutionController.signal,headers:{Accept:'application/json'}});
+      if(!response.ok)throw Error('catalogue');
+      const payload=await response.json();if(serial!==institutionSerial)return;
+      const items=payload.results || [];
+      const entries=items.map(item=>({value:item.source_id||item.id,label:[item.name,item.abbreviation?`(${item.abbreviation})`:'',`· ${item.area}, ${item.state}, ${item.country}`].filter(Boolean).join(' '),country:item.country,state:item.state,area:item.area}));
+      entries.forEach(item=>institutionCache.set(item.value,item));
+      let shown=append?[...optionsBox('institution_id').querySelectorAll('[data-value]')].filter(o=>o.dataset.value).map(o=>institutionCache.get(o.dataset.value)).filter(Boolean):[];
+      shown=[...new Map([...shown,...entries].map(item=>[item.value,item])).values()];
+      const selected=institutionCache.get(currentValue('institution_id'));
+      if(selected&&!shown.some(item=>item.value===selected.value))shown.unshift(selected);
+      rebuildOptions('institution_id',shown,PLACEHOLDERS.institution_id);
+      institutionOffset+=items.length;
+      if(institutionMore)institutionMore.hidden=!items.length||institutionOffset>=payload.count;
+      if(institutionStatus)institutionStatus.textContent=payload.count?`${institutionOffset} of ${payload.count} results shown.`:'No matches. Try All institutions or another search.';
+      const empty=filterPanel.querySelector('[data-institution-empty]');if(empty)empty.hidden=Boolean(payload.count);
+      syncDraftState();
+    }catch(error){if(error.name!=='AbortError'&&serial===institutionSerial&&institutionStatus)institutionStatus.textContent='Institution search is temporarily unavailable. Reopen this row to retry.';}
+  }
+  filterPanel.querySelectorAll('[data-institution-scope]').forEach(button=>button.addEventListener('click',()=>{
+    institutionLocal=button.dataset.institutionScope==='local';
+    filterPanel.querySelectorAll('[data-institution-scope]').forEach(other=>other.setAttribute('aria-pressed',String(other===button)));
+    loadInstitutions();
+  }));
+  institutionSearch?.addEventListener('input',()=>{institutionController?.abort();institutionSerial++;clearTimeout(institutionTimer);institutionTimer=setTimeout(()=>loadInstitutions(),180);});
+  institutionSearch?.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();clearTimeout(institutionTimer);loadInstitutions();}});
+  institutionMore?.addEventListener('click',()=>loadInstitutions(true));
 
   const uniqueValues = (records, key) => {
     const seen = new Map();
@@ -247,7 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
     make('', placeholder);
     entries.forEach((entry) => {
       if (typeof entry === 'string') make(entry, entry);
-      else make(entry.value, entry.label, { country: entry.country, state: entry.state });
+      else make(entry.value, entry.label, { country: entry.country, state: entry.state, area: entry.area });
     });
   };
 
@@ -283,27 +335,19 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const syncGeography = () => {
-    const states = uniqueValues(rowsForCountry(), 'state');
+    ensureInstitutionGeography(institutionCache.get(currentValue('institution_id')));
+    const country=currentValue('country'),state=currentValue('state');
+    if(worldGeo)rebuildOptions('country',Object.keys(worldGeo).sort((a,b)=>a.localeCompare(b)),PLACEHOLDERS.country);
+    const states = worldGeo ? Object.keys(worldGeo[country] || {}) : uniqueValues(rowsForCountry(), 'state');
+    if(!country && currentValue('state'))states.push(currentValue('state'));
     keepSelection('state', states);
     rebuildOptions('state', states, PLACEHOLDERS.state);
-
-    const areas = uniqueValues(rowsForState(), 'area');
+    const areas = worldGeo ? [...(worldGeo[country]?.[currentValue('state')] || [])] : uniqueValues(rowsForState(), 'area');
+    if((!country || !state) && currentValue('area'))areas.push(currentValue('area'));
     keepSelection('area', areas);
     rebuildOptions('area', areas, PLACEHOLDERS.area);
-
-    const country = currentValue('country');
-    const state = currentValue('state');
-    const institutions = allInstitutions.filter((institution) => {
-      const countryOk = !country || matches(institution.country, country.toLocaleLowerCase());
-      const stateOk = !state || matches(institution.state, state.toLocaleLowerCase());
-      return countryOk && stateOk;
-    });
-    keepSelection('institution_id', institutions);
-    rebuildOptions('institution_id', institutions, PLACEHOLDERS.institution_id);
-
-    const empty = filterPanel.querySelector('[data-institution-empty]');
-    if (empty) empty.hidden = institutions.length > 0;
-
+    // Institution selection is never pruned because parents are absent or different.
+    if(institutionLocal && institutionRow?.classList.contains('is-open'))loadInstitutions();
     syncDraftState();
   };
 
@@ -332,9 +376,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ? box.querySelector(`.artisan-filter-option[data-value="${CSS.escape(value)}"]`)
         : null;
       if (key === 'institution_id') {
-        label.textContent = selected ? (selected.dataset.label || selected.textContent.trim()) : PLACEHOLDERS[key];
+        label.textContent = selected ? (selected.dataset.label || selected.textContent.trim()) : (institutionCache.get(value)?.label || (value ? 'Saved institution' : PLACEHOLDERS[key]));
       } else {
-        label.textContent = selected ? selected.textContent.trim() : PLACEHOLDERS[key];
+        label.textContent = selected ? selected.textContent.trim() : (value || PLACEHOLDERS[key]);
       }
       label.classList.toggle('is-placeholder', !value);
     });
@@ -519,14 +563,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const key = box.dataset.filterOptions;
     const field = input(key);
     if (!field) return;
+    const previous=field.value;
     field.value = option.dataset.value || '';
     markSelection(key, field.value);
 
-    if (key === 'country' || key === 'state') {
+    if (key === 'institution_id') {
+      const selected=institutionCache.get(field.value);
+      if(selected){
+        ensureInstitutionGeography(selected);
+        ['country','state','area'].forEach(k=>{if(input(k))input(k).value=selected[k]||'';});
+        syncGeography();
+      }else syncDraftState();
+    } else if (['country','state','area'].includes(key)) {
+      if(previous!==field.value){
+        if(key==='country'){input('state').value='';input('area').value='';}
+        if(key==='state')input('area').value='';
+        input('institution_id').value='';
+      }
       syncGeography();
-    } else {
-      syncDraftState();
-    }
+    } else syncDraftState();
     closeRow(key);
   });
 
@@ -536,6 +591,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const field = input(key);
         if (field) field.value = '';
       });
+      institutionController?.abort();institutionSerial++;
+      institutionLocal=false;
+      if(institutionSearch)institutionSearch.value='';
+      filterPanel.querySelectorAll('[data-institution-scope]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.institutionScope==='all')));
       syncGeography();
       syncTrades();
       closeAllRows();

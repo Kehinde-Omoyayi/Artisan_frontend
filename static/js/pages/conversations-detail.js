@@ -4,6 +4,38 @@
   const readApiPayload=(response)=>apiErrors?apiErrors.readResponse(response):response.json().catch(()=>null);
   const stream=document.getElementById("conversation-stream");
   if(!stream)return;
+  // Read-only guidance: changing a card never clicks/submits a transactional control.
+  const guidanceNode=document.getElementById("booking-guidance");
+  let guide=null,guideSignature="";
+  function syncGuidance(next){
+    if(!guidanceNode)return;
+    const signature=JSON.stringify(next||null);
+    if(signature===guideSignature)return;
+    guideSignature=signature;guide=next;
+    guidanceNode.hidden=!next;
+    if(!next)return;
+    for(const key of ["role","title","message"]){
+      guidanceNode.querySelector(`[data-guide-${key}]`).textContent=next[key]||"";
+    }
+    const list=guidanceNode.querySelector("[data-guide-steps]");
+    list.replaceChildren(...(next.steps||[]).map(text=>{const li=document.createElement("li");li.textContent=text;return li;}));
+    const button=guidanceNode.querySelector("[data-guide-action]");
+    button.hidden=!next.action;button.textContent=next.action?.label||"";
+    guidanceNode.querySelector("[data-guide-status]").textContent="";
+  }
+  try{syncGuidance(JSON.parse(document.getElementById("booking-guidance-data")?.textContent||"null"));}catch(e){}
+  guidanceNode?.querySelector("[data-guide-action]")?.addEventListener("click",()=>{
+    const selectors={EDIT_REQUEST:"#request-assistant-card, .request-card",SEND_OFFER:'.offer-create-card, form:has(input[name="action"][value="offer"])',REVISE_OFFER:'form:has(input[name="action"][value="offer"]), .offer-card',REVIEW_OFFER:'.offer-card, form:has(input[name="action"][value="accept"])',PAY:'form:has(input[name="action"][value="pay"])',START_BOOKING:'form:has(input[name="action"][value="start_booking"])',SUBMIT_COMPLETION:'form:has(input[name="action"][value="complete"])',CONFIRM_COMPLETION:'form:has(input[name="action"][value="confirm_completion"])',BOOKING:'.booking-card, a.workflow-text-link[href*="/bookings/"]',SUPPORT:'.support-case-card, .support-card'};
+    const selector=selectors[guide?.action?.code];
+    const target=selector?document.querySelector(selector):null;
+    if(!target){guidanceNode.querySelector("[data-guide-status]").textContent="The next step has changed or its controls are not on this page. Refresh to load the current controls; use booking details or support if needed.";return;}
+    let parent=target;
+    while(parent){if(parent.tagName==="DETAILS")parent.open=true;parent=parent.parentElement;}
+    const focus=target.matches("a,button,input,textarea,select")?target:target.querySelector('textarea:not([disabled]),input:not([type="hidden"]):not([disabled]),button:not([disabled]),summary,a');
+    target.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"center"});
+    if(focus)focus.focus({preventScroll:true});
+    guidanceNode.querySelector("[data-guide-status]").textContent="Review the existing controls below. Nothing has been submitted.";
+  });
   const id=stream.dataset.conversationId;
   const form=document.getElementById("conversation-message-form");
   const input=form?.querySelector("textarea[name=body]");
@@ -26,6 +58,7 @@
   let assistantContext=null;
   try{assistantContext=JSON.parse(assistantOptionsNode?.textContent||"null");}catch(_){assistantContext=null;}
   const seenMessageIds=new Set();
+  let lastRenderedId=null,lastReadMessageId=null;
 
   const setStatus=(text)=>{if(statusNode)statusNode.textContent=text;};
   const safeUrl=(value)=>{
@@ -272,7 +305,16 @@
 
   function makeAttachment(attachment){
     const url=safeUrl(attachment.url);
-    if(!url)return null;
+    if(!url){
+      if(String(attachment.content_type||'').match(/^(audio|video)\//)){
+        const notice=document.createElement('span');notice.textContent='Recording unavailable (scan pending or access closed under the media policy).';return notice;
+      }
+      return null;
+    }
+    if(String(attachment.content_type||'').match(/^(audio|video)\//)){
+      const player=document.createElement(attachment.content_type.startsWith('audio/')?'audio':'video');
+      player.controls=true;player.preload='none';player.src=url;player.playsInline=true;return player;
+    }
     const contentType=String(attachment.content_type||"file");
     if(contentType.toLowerCase().startsWith("image/")){
       const link=document.createElement("a");
@@ -449,20 +491,26 @@
   }
 
   function markRead(){
-    if(readPending)return;
+    if(readPending||document.hidden||!lastRenderedId||lastRenderedId===lastReadMessageId)return;
+    if(scrollArea.scrollHeight-scrollArea.scrollTop-scrollArea.clientHeight>80)return;
+    const marker=lastRenderedId;
     readPending=true;
     const data=new FormData();
     data.set("csrfmiddlewaretoken",csrf);
     data.set("action","read");
+    data.set("last_message_id",marker);
     fetch(window.location.href,{method:"POST",body:data,credentials:"same-origin",headers:{"X-CSRFToken":csrf,"X-Requested-With":"XMLHttpRequest"}})
       .then(response=>{
         if(!response.ok)throw new Error("read_failed");
+        lastReadMessageId=marker;
         stream.dataset.unreadCount="0";
         if(unreadNode)unreadNode.textContent="0 unread";
       })
       .catch(()=>{})
       .finally(()=>{readPending=false;});
   }
+
+  scrollArea.addEventListener("scroll",()=>markRead(),{passive:true});
 
   async function refresh(){
     try{
@@ -471,14 +519,15 @@
       const payload=await readApiPayload(response);
       if(!response.ok){setStatus(formatApiError(payload,response.status));return;}
       if(!payload){setStatus(formatApiError(null,response.status));return;}
+      if(Object.prototype.hasOwnProperty.call(payload,"guidance"))syncGuidance(payload.guidance);
       const messages=Array.isArray(payload.results)?payload.results.slice().reverse():Array.isArray(payload)?payload.slice().reverse():[];
       const wasFirstPayload=firstPayload;
       const newIncoming=!wasFirstPayload&&messages.some(message=>message.id&&!seenMessageIds.has(String(message.id))&&Number(message.sender_id)!==viewerId&&message.message_type!=="SYSTEM");
       messages.forEach(message=>{if(message.id)seenMessageIds.add(String(message.id));});
       const signature=JSON.stringify(messages.map(message=>[message.id,message.body,(message.attachments||[]).map(attachment=>[attachment.id,attachment.url,attachment.scan_status])]));
       if(signature!==lastSignature){render(messages);lastSignature=signature;}
-      if(wasFirstPayload&&Number(stream.dataset.unreadCount||0)>0)markRead();
-      else if(newIncoming)markRead();
+      lastRenderedId=messages.length?String(messages[messages.length-1].id):null;
+      markRead();
       setStatus(role==="artisan"?"You can keep service updates and direct messages here.":"Messages are sent securely through the marketplace API.");
     }catch(_){setStatus(formatApiError(null,null,{networkError:true}));}
   }
@@ -545,6 +594,7 @@
 
   fileInput?.addEventListener("change",()=>{
     selectedFiles=Array.from(fileInput.files||[]);
+    if(voiceFile&&!selectedFiles.includes(voiceFile))clearVoice();
     showAttachmentPreview();
   });
   preview?.addEventListener("click",event=>{
@@ -552,20 +602,72 @@
     if(!button)return;
     const index=Number(button.dataset.attachmentIndex);
     if(!Number.isInteger(index)||index<0||index>=selectedFiles.length)return;
-    selectedFiles.splice(index,1);
+    const removed=selectedFiles.splice(index,1)[0];
+    if(removed===voiceFile)clearVoice();
     syncFileInput();
     showAttachmentPreview();
     setStatus(selectedFiles.length?"Attachment removed. The other files and message are unchanged.":"Attachment removed. Your message is unchanged.");
   });
 
+  // MediaRecorder captures locally; nothing uploads until the normal Send action.
+  let voiceRecorder=null,voiceStream=null,voiceTimer=null,voiceBlobUrl=null,voiceFile=null,voiceRequesting=false,voiceLeaving=false;
+  const voiceTools=form?.querySelector('[data-voice-tools]');
+  const recordButton=voiceTools?.querySelector('[data-voice-record]');
+  const stopButton=voiceTools?.querySelector('[data-voice-stop]');
+  const discardButton=voiceTools?.querySelector('[data-voice-discard]');
+  const voiceStatus=voiceTools?.querySelector('[data-voice-status]');
+  const voicePreview=voiceTools?.querySelector('[data-voice-preview]');
+  function releaseMicrophone(){clearInterval(voiceTimer);voiceStream?.getTracks().forEach(t=>t.stop());voiceStream=null;}
+  function clearVoice(){
+    if(voiceRecorder?.state==='recording')return;
+    if(voiceBlobUrl)URL.revokeObjectURL(voiceBlobUrl);voiceBlobUrl=null;
+    if(voiceFile)selectedFiles=selectedFiles.filter(f=>f!==voiceFile);voiceFile=null;
+    if(voicePreview){voicePreview.pause();voicePreview.removeAttribute('src');voicePreview.hidden=true;}
+    if(discardButton)discardButton.hidden=true;
+    if(recordButton)recordButton.disabled=false;
+    if(voiceStatus)voiceStatus.textContent='Ready. Record or attach a supported file; nothing uploads until Send.';
+    syncFileInput();showAttachmentPreview();
+  }
+  discardButton?.addEventListener('click',()=>{clearVoice();voiceStatus.textContent='Discarded. Record again or use the attachment control.';});
+  stopButton?.addEventListener('click',()=>{if(voiceRecorder?.state==='recording')voiceRecorder.stop();});
+  recordButton?.addEventListener('click',async()=>{
+    if(sendingMessage)return;
+    if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){voiceStatus.textContent='Recording unavailable. Use the attachment control or text.';return;}
+    clearVoice();recordButton.disabled=true;voiceRequesting=true;
+    try{
+      voiceStream=await navigator.mediaDevices.getUserMedia({audio:true});voiceRequesting=false;
+      if(voiceLeaving||sendingMessage){releaseMicrophone();recordButton.disabled=false;return;}
+      const mime=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(t=>MediaRecorder.isTypeSupported(t));
+      if(!mime)throw Error('unsupported');
+      const chunks=[];let bytes=0;const started=Date.now();
+      voiceRecorder=new MediaRecorder(voiceStream,{mimeType:mime});
+      voiceRecorder.ondataavailable=e=>{if(e.data.size){chunks.push(e.data);bytes+=e.data.size;if(bytes>5*1024*1024&&voiceRecorder.state==='recording')voiceRecorder.stop();}};
+      voiceRecorder.onstop=()=>{
+        releaseMicrophone();stopButton.hidden=true;
+        if(bytes>5*1024*1024){recordButton.disabled=false;voiceStatus.textContent='Recording exceeded 5 MB. Please re-record a shorter note.';return;}
+        const ext=mime.includes('mp4')?'m4a':mime.includes('ogg')?'ogg':'webm';
+        voiceFile=new File(chunks,'voice-note.'+ext,{type:mime});
+        selectedFiles.push(voiceFile);syncFileInput();showAttachmentPreview();
+        voiceBlobUrl=URL.createObjectURL(voiceFile);voicePreview.src=voiceBlobUrl;voicePreview.hidden=false;discardButton.hidden=false;
+        voiceStatus.textContent='Preview your note. Use Send to upload, or Discard / re-record.';
+      };
+      voiceRecorder.onerror=()=>{releaseMicrophone();recordButton.disabled=false;stopButton.hidden=true;voiceStatus.textContent='Recording failed. Use file upload or text.';};
+      voiceRecorder.start(250);stopButton.hidden=false;
+      voiceTimer=setInterval(()=>{const seconds=Math.floor((Date.now()-started)/1000);voiceStatus.textContent='● Recording '+seconds+' / 90 seconds';if(Date.now()-started>=89500&&voiceRecorder.state==='recording')voiceRecorder.stop();},200);
+    }catch(_){voiceRequesting=false;releaseMicrophone();recordButton.disabled=false;voiceStatus.textContent='Microphone denied or unavailable. Use the attachment control or text.';}
+  });
+  document.addEventListener('visibilitychange',()=>{if(document.hidden&&voiceRecorder?.state==='recording')voiceRecorder.stop();});
+  window.addEventListener('pagehide',()=>{voiceLeaving=true;if(voiceRecorder?.state==='recording'){voiceRecorder.onstop=null;voiceRecorder.stop();}releaseMicrophone();if(voiceBlobUrl)URL.revokeObjectURL(voiceBlobUrl);});
+
   form?.addEventListener("submit",async event=>{
     event.preventDefault();
     if(sendingMessage)return;
+    if(voiceRequesting||voiceRecorder?.state==="recording"){setStatus("Stop and preview the recording before sending.");return;}
     const body=input?.value.trim()||"";
     const files=selectedFiles.slice();
     if(!body&&!files.length){setStatus("Write a message or attach a photo or file first.");input?.focus();return;}
     if(files.length>5){setStatus("You can attach up to five files to one message.");fileInput?.focus();return;}
-    const oversized=files.find(file=>file.size>10*1024*1024);
+    const oversized=files.find(file=>file.size>(file.type.startsWith("audio/")?5:10)*1024*1024);
     if(oversized){setStatus(`${oversized.name} is over the 10 MB attachment limit.`);fileInput?.focus();return;}
     const data=new FormData(form);
     data.delete("attachments");
@@ -594,6 +696,7 @@
       input.value="";
       if(fileInput)fileInput.value="";
       selectedFiles=[];
+      clearVoice();
       clearAttachmentPreview();
       setStatus(assistantEnabled?"Sent securely. The request remains a draft until you review and submit it.":"Sent securely.");
       await refresh();

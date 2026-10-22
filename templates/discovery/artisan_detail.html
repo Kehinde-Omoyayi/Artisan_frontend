@@ -76,7 +76,7 @@
     <div>
       <div class="eyebrow">Private conversation</div>
       <h2>{% if role == 'artisan' %}Talk to this artisan{% elif role == 'customer' %}Ready to explain what you need?{% else %}Want to message this artisan?{% endif %}</h2>
-      <p>{% if not authenticated %}Browse profiles and services publicly. Sign in to start a private conversation or submit a service request.{% elif role == 'artisan' %}Start a direct artisan-to-artisan chat. Your conversation is separate from service quoting and payment workflows.{% else %}Start a private conversation to explain the work. A service request or offer can follow when you are ready.{% endif %}</p>
+      <p>{% if not authenticated %}Browse profiles and services publicly. Sign in to start a private conversation or submit a service request.{% elif role == 'artisan' %}Start a direct artisan-to-artisan chat. Your conversation is separate from service quoting and payment workflows.{% else %}Start a request-linked draft room. Describe the work or send media, then review and choose Send Request. Quotes and payments remain separate confirmed actions.{% endif %}</p>
     </div>
     <div class="artisan-discovery-conversation-actions">
       <form method="post" action="{% url 'start-direct-conversation' pk=artisan.id %}">

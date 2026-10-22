@@ -2,6 +2,7 @@
 {% load static site_tags %}
 {% block title %}Discover artisans · Artisan Market{% endblock %}
 {% block head %}
+<link rel="stylesheet" href="{% asset 'css/institution-picker.css' %}">
 <style>
 /* Safety layer: these few rules keep the discovery page readable even before
    (or without) artisan-pages.css — icons can never render at intrinsic size. */
@@ -165,7 +166,7 @@
                 </div>
               </section>
 
-              <section class="artisan-filter-row" data-filter-row data-filter-key="institution_id">
+              <section class="artisan-filter-row" data-filter-row data-filter-key="institution_id" data-institution-search-url="{% url 'institution-catalogue' %}">
                 <button class="artisan-filter-row-head" type="button" data-filter-row-toggle aria-expanded="false" aria-controls="artisan-filter-institution">
                   <span class="artisan-filter-row-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="M4 20.4h16M6.2 20.4V9.6M17.8 20.4V9.6M3.4 9.6 12 4l8.6 5.6M9.4 20.4v-5.2h5.2v5.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg></span>
                   <span class="artisan-filter-row-label">Closest institution</span>
@@ -173,13 +174,18 @@
                   <span class="artisan-filter-chevron" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
                 </button>
                 <div class="artisan-filter-row-body" id="artisan-filter-institution" data-filter-body hidden>
+                  <div class="institution-scope" aria-label="Institution search scope"><button type="button" class="institution-scope-button" data-institution-scope="all" aria-pressed="true">All institutions</button><button type="button" class="institution-scope-button" data-institution-scope="local" aria-pressed="false">Use selected location</button></div>
+                  <p class="institution-picker-help">Search worldwide without choosing a location first. Selecting an institution fills its country, state and area.</p>
+                  <input type="search" class="institution-search-input" data-institution-search placeholder="Search name or abbreviation…" aria-label="Search institutions worldwide" autocomplete="off">
                   <div class="artisan-filter-options" role="listbox" aria-label="Closest institution" data-filter-options="institution_id">
                     <button class="artisan-filter-option{% if not params.institution_id %} is-selected{% endif %}" type="button" role="option" aria-selected="{% if not params.institution_id %}true{% else %}false{% endif %}" data-value="" data-label="All institutions" data-country="" data-state="">All institutions</button>
                     {% for institution in institutions %}
-                    <button class="artisan-filter-option{% if params.institution_id == institution.id %} is-selected{% endif %}" type="button" role="option" aria-selected="{% if params.institution_id == institution.id %}true{% else %}false{% endif %}" data-value="{{ institution.id }}" data-country="{{ institution.country }}" data-state="{{ institution.state }}" data-label="{{ institution.name }}{% if institution.campus %} — {{ institution.campus }}{% endif %}">{{ institution.name }}{% if institution.campus %} — {{ institution.campus }}{% endif %}{% if institution.area %} · {{ institution.area }}{% endif %}{% if institution.state %}, {{ institution.state }}{% endif %}</button>
+                    <button class="artisan-filter-option{% if params.institution_id == institution.id %} is-selected{% endif %}" type="button" role="option" aria-selected="{% if params.institution_id == institution.id %}true{% else %}false{% endif %}" data-value="{{ institution.id }}" data-country="{{ institution.country }}" data-state="{{ institution.state }}" data-area="{{ institution.area }}" data-label="{{ institution.name }}{% if institution.abbreviation %} ({{ institution.abbreviation }}){% endif %}">{{ institution.name }}{% if institution.abbreviation %} ({{ institution.abbreviation }}){% endif %}{% if institution.area %} · {{ institution.area }}{% endif %}{% if institution.state %}, {{ institution.state }}{% endif %}</button>
                     {% endfor %}
                   </div>
-                  <p class="artisan-filter-empty" data-institution-empty {% if institutions %}hidden{% endif %}>No institutions are listed in the catalogue yet.</p>
+                  <p class="institution-picker-help" data-institution-status role="status" aria-live="polite"></p>
+                  <button type="button" class="institution-more" data-institution-more hidden>Load more institutions</button>
+                  <p class="artisan-filter-empty" data-institution-empty {% if institutions %}hidden{% endif %}>No institutions match this search. Try All institutions or another name.</p>
                 </div>
               </section>
             </div>
@@ -216,6 +222,7 @@
   </form>
 
   {{ locations|json_script:"discovery-location-catalogue" }}
+  {{ discovery_geography|json_script:"discovery-geography-data" }}
 
   <section class="artisan-discovery-results" aria-label="Matching artisans">
     {% if promoted_items %}
