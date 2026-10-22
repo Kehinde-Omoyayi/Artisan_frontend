@@ -2864,23 +2864,12 @@ def artisans(request):
 
     geography = world_geography()
     location_items = []
-    institutions = catalogue_page({})["results"]
-    selected_institution = institution_record(filters["institution_id"])
+    selected_institution = institution_record(filters["institution_id"]) if filters["institution_id"] else None
     invalid_institution = False
     if selected_institution:
         # Source keys are frontend-only; the API still matches service locality.
         for key in ("country", "state", "area"):
             filters[key] = selected_institution[key]
-        selected = {
-            **selected_institution,
-            "id": selected_institution["source_id"],
-            "abbreviation": next(
-                iter(selected_institution.get("abbreviations") or []), ""
-            ),
-            "campus": "",
-        }
-        if not any(row["id"] == selected["id"] for row in institutions):
-            institutions = [selected] + institutions
     elif filters["institution_id"]:
         # Preserve old UUID links for the legacy backend; reject unknown source keys.
         from uuid import UUID
@@ -2892,6 +2881,22 @@ def artisans(request):
             messages.error(
                 request, "Choose an institution from the current search results."
             )
+    # Institutions are directly reduced when any geography filter is present (country/state/area)
+    effective_institution_filters = {
+        k: filters[k] for k in ("country", "state", "area") if filters.get(k)
+    }
+    institutions = catalogue_page(effective_institution_filters)["results"]
+    if selected_institution:
+        selected = {
+            **selected_institution,
+            "id": selected_institution["source_id"],
+            "abbreviation": next(
+                iter(selected_institution.get("abbreviations") or []), ""
+            ),
+            "campus": "",
+        }
+        if not any(row["id"] == selected["id"] for row in institutions):
+            institutions = [selected] + institutions
 
     api_filters = {key: value for key, value in filters.items() if value}
     if selected_institution:
@@ -4909,6 +4914,17 @@ def payout_account(request):
         if exc.status_code != 404:
             handle_api_error(request, exc)
         account = {}
+    if not isinstance(account, dict):
+        account = {}
+
+    # Saved payout details lock after every change; replacing them needs the
+    # emailed one-time code once the lock window has passed.
+    locked_until = parse_datetime(str(account.get("payout_change_locked_until") or ""))
+    has_account = bool(account.get("account_name"))
+    payout_locked = bool(
+        has_account and locked_until is not None and locked_until > timezone.now()
+    )
+    change_mode = False
 
     banks = []
     try:
@@ -4920,28 +4936,103 @@ def payout_account(request):
     except APIError as exc:
         handle_api_error(request, exc)
 
-    form_data = request.POST if request.method == "POST" else None
-    form = PayoutAccountForm(form_data, initial=account, banks=banks)
-    if request.method == "POST" and form.is_valid():
-        payload = {
-            key: form.cleaned_data[key]
-            for key in ("account_name", "bank_code", "account_number")
-        }
-        try:
-            _, account, _ = client.put(
-                "/payments/payout-account/",
-                payload,
-                idempotency_key=new_idempotency_key("payout-account-update"),
-            )
-            messages.success(
-                request,
-                "Flutterwave confirmed the bank account name. The payout account is awaiting protected finance verification; payouts are not enabled yet.",
-            )
-            return redirect("payout-account")
-        except APIError as exc:
-            handle_api_error(request, exc)
+    action = str(request.POST.get("action") or "").strip() if request.method == "POST" else ""
+    requested_change_mode = bool(
+        has_account
+        and not payout_locked
+        and request.method == "POST"
+        and request.POST.get("change_mode")
+    )
+    change_mode = requested_change_mode
 
-    return page(request, "payments/payout_account.html", account=account, form=form)
+    if request.method == "POST" and action == "cancel_change":
+        messages.info(request, "Payout account change cancelled. Your saved details are unchanged.")
+        return redirect("payout-account")
+
+    if request.method == "POST" and action == "request_code":
+        if not payout_locked:
+            try:
+                _, payload, _ = client.post("/payments/payout-account/request-otp/")
+                detail = (
+                    payload.get("detail")
+                    if isinstance(payload, dict)
+                    else None
+                ) or "A 6-digit security code was sent to your email."
+                messages.success(request, detail)
+            except APIError as exc:
+                if exc.status_code == 429:
+                    messages.info(
+                        request,
+                        "A security code was already sent. Check your email for the latest code.",
+                    )
+                else:
+                    handle_api_error(request, exc)
+        else:
+            messages.warning(
+                request,
+                "Payout details are still locked. You can request a change once the lock expires.",
+            )
+        # Stay on the page in change mode so the artisan can enter the code.
+        change_mode = True
+
+    form_data = request.POST if request.method == "POST" and not action else None
+    form = PayoutAccountForm(
+        form_data,
+        initial=account,
+        banks=banks,
+        locked=has_account and not change_mode,
+        requires_otp=change_mode,
+    )
+
+    if request.method == "POST" and not action:
+        if payout_locked:
+            messages.warning(
+                request,
+                "Payout details are locked. Use the change flow once the lock expires.",
+            )
+        elif form.is_valid():
+            payload = {
+                key: form.cleaned_data[key]
+                for key in ("account_name", "bank_code", "account_number")
+            }
+            if form.cleaned_data.get("otp"):
+                payload["otp"] = form.cleaned_data["otp"]
+            try:
+                _, account, _ = client.put(
+                    "/payments/payout-account/",
+                    payload,
+                    idempotency_key=new_idempotency_key("payout-account-update"),
+                )
+                messages.success(
+                    request,
+                    "Flutterwave confirmed the bank account name. The payout account is awaiting protected finance verification and is now locked for 3 days; payouts are not enabled yet.",
+                )
+                return redirect("payout-account")
+            except APIError as exc:
+                handle_api_error(request, exc)
+                # Let the artisan retry with a code rather than re-locking silently.
+                change_mode = has_account and not payout_locked
+                if change_mode:
+                    form = PayoutAccountForm(
+                        request.POST,
+                        banks=banks,
+                        requires_otp=True,
+                    )
+
+    form_will_unlock_at = None
+    if payout_locked and locked_until is not None:
+        form_will_unlock_at = timezone.localtime(locked_until)
+
+    return page(
+        request,
+        "payments/payout_account.html",
+        account=account,
+        form=form,
+        payout_locked=payout_locked,
+        locked_until=form_will_unlock_at,
+        change_mode=change_mode,
+        has_saved_account=has_account,
+    )
 
 
 @api_guard

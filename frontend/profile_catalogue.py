@@ -20,6 +20,19 @@ def index():
     return json.loads((ROOT / "index.json").read_text(encoding="utf-8"))
 
 
+def _institution_sort_key(r):
+    """Alphabetical by name; Nigeria always first when no country filter."""
+    is_nigeria = 0 if r["country"].casefold() == "nigeria" else 1
+    return (
+        is_nigeria,
+        r["name"].casefold(),
+        r["country"].casefold(),
+        r["state"].casefold(),
+        r["area"].casefold(),
+        r["source_id"],
+    )
+
+
 @lru_cache(maxsize=32)
 def institutions(country):
     entry = next(
@@ -30,8 +43,16 @@ def institutions(country):
         ),
         None,
     )
-    return (
-        json.loads((ROOT / entry["file"]).read_text(encoding="utf-8")) if entry else []
+    rows = json.loads((ROOT / entry["file"]).read_text(encoding="utf-8")) if entry else []
+    # Always return alphabetically sorted within the country
+    return sorted(
+        rows,
+        key=lambda r: (
+            r["name"].casefold(),
+            r["state"].casefold(),
+            r["area"].casefold(),
+            r["source_id"],
+        ),
     )
 
 
@@ -44,13 +65,7 @@ def all_institutions():
                 for entry in index()["countries"]
                 for row in institutions(entry["country"])
             ),
-            key=lambda r: (
-                r["name"].casefold(),
-                r["country"].casefold(),
-                r["state"].casefold(),
-                r["area"].casefold(),
-                r["source_id"],
-            ),
+            key=_institution_sort_key,
         )
     )
 
@@ -77,6 +92,20 @@ def catalogue_page(params):
         value = str(params.get(field) or "").strip().casefold()[:150]
         if value:
             records = [r for r in records if r[field].casefold() == value]
+    # Directly reduce institution list when country/state/area is present — re-sort to keep alphabetical
+    has_country = bool(str(params.get("country") or "").strip())
+    if has_country:
+        records = sorted(
+            records,
+            key=lambda r: (
+                r["name"].casefold(),
+                r["state"].casefold(),
+                r["area"].casefold(),
+                r["source_id"],
+            ),
+        )
+    else:
+        records = sorted(records, key=_institution_sort_key)
     query = str(params.get("q") or "").strip().casefold()[:180]
     if query:
         records = [

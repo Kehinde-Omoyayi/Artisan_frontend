@@ -6,6 +6,9 @@
     const select = form.querySelector('[data-payout-bank-select]');
     const root = form.querySelector('[data-bank-picker]');
     if (!select || !root) return;
+    // Saved details render locked (native select, disabled) until a verified
+    // change request starts; do not build the interactive picker over that.
+    if (select.disabled) return;
     form.dataset.bankReady = 'true';
     const toggle=root.querySelector('[data-bank-toggle]'), panel=root.querySelector('[data-bank-panel]');
     const search=root.querySelector('[data-payout-bank-search]'), list=root.querySelector('[data-bank-options]');

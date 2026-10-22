@@ -237,7 +237,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if(institutionStatus)institutionStatus.textContent='Loading institutions…';
     const url=new URL(institutionRow.dataset.institutionSearchUrl,location.origin==='null'?'https://preview.invalid/':location.href);
     url.searchParams.set('q',institutionSearch?.value || '');url.searchParams.set('offset',institutionOffset);
-    if(institutionLocal)['country','state','area'].forEach(k=>{if(currentValue(k))url.searchParams.set(k,currentValue(k));});
+    // Directly reduce when any geography is selected (Nigeria default already); scope toggle is additive
+    const hasGeo = currentValue('country') || currentValue('state') || currentValue('area');
+    if(institutionLocal || hasGeo)['country','state','area'].forEach(k=>{if(currentValue(k))url.searchParams.set(k,currentValue(k));});
     try{
       const response=await fetch(url,{signal:institutionController.signal,headers:{Accept:'application/json'}});
       if(!response.ok)throw Error('catalogue');
@@ -346,8 +348,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if((!country || !state) && currentValue('area'))areas.push(currentValue('area'));
     keepSelection('area', areas);
     rebuildOptions('area', areas, PLACEHOLDERS.area);
-    // Institution selection is never pruned because parents are absent or different.
-    if(institutionLocal && institutionRow?.classList.contains('is-open'))loadInstitutions();
+    // Institution list is directly reduced when country/state/area is set; always refresh when geography changes
+    const hasGeo = currentValue('country') || currentValue('state') || currentValue('area');
+    if(hasGeo && !institutionLocal){
+      // Auto-switch to filtered view when any location is chosen (Nigeria default)
+      institutionLocal = true;
+      filterPanel.querySelectorAll('[data-institution-scope]').forEach(btn=>{
+        const isLocal = btn.dataset.institutionScope==='local';
+        btn.setAttribute('aria-pressed', String(isLocal));
+      });
+    }
+    if((institutionLocal || hasGeo) && institutionRow?.classList.contains('is-open'))loadInstitutions();
     syncDraftState();
   };
 

@@ -34,6 +34,18 @@
       const source=form.elements.namedItem('nearest_institution_source_id');
       if(source)source.value='';
     }
+    // Directly reduce institution list when geography changes — auto-enable local scope
+    const hasGeo = fields.country?.value || fields.state?.value || fields.area?.value;
+    if(hasGeo && rows.nearest_institution){
+      rows.nearest_institution.localScope = true;
+      const scopeRow = rows.nearest_institution.panel?.querySelector('.institution-scope');
+      if(scopeRow){
+        scopeRow.querySelectorAll('button').forEach(b=>{
+          const isLocal = b.dataset.institutionScope==='local';
+          b.setAttribute('aria-pressed', String(isLocal));
+        });
+      }
+    }
     closeAll(); rows[n].toggle.focus();
   };
   const localOptions = n => {
@@ -62,7 +74,8 @@
     r.status.textContent='Loading institutions…';
     try {
       const url = new URL(form.dataset.institutionsUrl, location.origin === 'null' ? 'https://preview.invalid/' : location.href);
-      if(r.localScope) ['country','state','area'].forEach(k=>{if(fields[k]?.value)url.searchParams.set(k,fields[k].value);});
+      const hasGeo = fields.country?.value || fields.state?.value || fields.area?.value;
+      if(r.localScope || hasGeo) ['country','state','area'].forEach(k=>{if(fields[k]?.value)url.searchParams.set(k,fields[k].value);});
       url.searchParams.set('q',r.search.value);url.searchParams.set('offset',r.offset||0);
       const response=await fetch(url,{signal:controller.signal,headers:{Accept:'application/json'}});
       if(!response.ok)throw Error('catalogue');
@@ -98,7 +111,19 @@
       if (!open) return;
       panel.hidden=false;toggle.setAttribute('aria-expanded','true');
       if (n==='date_of_birth') renderCalendar();
-      else { search.value=''; n==='nearest_institution' ? institutions() : renderLocal(n); search.focus(); }
+      else {
+        search.value='';
+        if(n==='nearest_institution'){
+          const hasGeo = fields.country?.value || fields.state?.value || fields.area?.value;
+          if(hasGeo){
+            rows[n].localScope = true;
+            const scopeEl = panel.querySelector('.institution-scope');
+            if(scopeEl) scopeEl.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.institutionScope==='local')));
+          }
+          institutions();
+        } else renderLocal(n);
+        search.focus();
+      }
     },'profile-pick-toggle');
     value.id=originalId+'-display';
     toggle.id=originalId; toggle.setAttribute('aria-describedby',value.id); toggle.append(value,make('span','profile-pick-chevron','⌄'));

@@ -1335,8 +1335,24 @@ class PayoutAccountForm(StyledForm):
             }
         ),
     )
+    otp = forms.RegexField(
+        regex=r"^\d{6}$",
+        max_length=6,
+        min_length=6,
+        required=False,
+        label="Security code",
+        help_text="Enter the 6-digit code emailed to you to approve this payout account change.",
+        widget=forms.TextInput(
+            attrs={
+                "autocomplete": "one-time-code",
+                "inputmode": "numeric",
+                "maxlength": "6",
+                "pattern": "[0-9]{6}",
+            }
+        ),
+    )
 
-    def __init__(self, *args, banks=None, **kwargs):
+    def __init__(self, *args, banks=None, locked=False, requires_otp=False, **kwargs):
         super().__init__(*args, **kwargs)
         choices = [("", "Choose a supported bank")]
         for bank in banks or []:
@@ -1348,3 +1364,12 @@ class PayoutAccountForm(StyledForm):
                 choices.append((code, name))
         self.fields["bank_code"].choices = choices
         self.fields["bank_code"].widget.attrs["data-payout-bank-select"] = ""
+        if locked:
+            # Saved payout details stay read-only until the artisan starts a
+            # verified change request.
+            for field in self.fields.values():
+                field.disabled = True
+        if requires_otp:
+            self.fields["otp"].required = True
+        else:
+            self.fields.pop("otp", None)

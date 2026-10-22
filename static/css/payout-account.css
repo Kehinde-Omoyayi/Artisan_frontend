@@ -44,4 +44,10 @@
 .payout-account-summary .detail-list strong { overflow-wrap: anywhere; }
 @keyframes bank-panel-open { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
 @media(max-width:760px) { .payout-grid { grid-template-columns: minmax(0,1fr); gap: 18px; } .payout-heading { padding-top: 0; } }
-@media(prefers-reduced-motion:reduce) { .payout-bank-panel { animation: none; } .payout-bank-toggle svg { transition: none; } }
+@media(prefers-reduced-motion:reduce) { .payout-bank-panel { animation: none; } .payout-bank-toggle svg { transition: none; } }.payout-lock-banner { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 14px; padding: 12px 14px; border: 1px solid #e3cfae; border-radius: 10px; background: #fbf3e2; color: #7a5a34; font-size: 12px; line-height: 1.6; }
+.payout-secondary-actions { display: flex; gap: 12px; margin-top: 10px; }
+.payout-secondary-action { flex: 1; min-height: 40px; padding: 9px 12px; border: 1px solid #dfcbbb; border-radius: 9px; background: #fffdfb; color: #7a5a40; font: inherit; font-size: 12px; cursor: pointer; }
+.payout-secondary-action:hover { background: #f4eadf; }
+.payout-secondary-action:focus-visible { outline: 2px solid #a37352; outline-offset: 2px; }
+.payout-save:disabled { opacity: .6; cursor: not-allowed; }
+[data-payout-form] .form-field input:disabled, [data-payout-form] .form-field select:disabled { opacity: .65; cursor: not-allowed; background: #f6efe7; }

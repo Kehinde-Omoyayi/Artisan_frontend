@@ -215,6 +215,7 @@
         renderStates();
         renderAreas();
         syncLocation();
+        renderInstitutions();
       },
       state.country,
     );
@@ -235,6 +236,7 @@
         setValue('area', '', 'All areas');
         renderAreas();
         syncLocation();
+        renderInstitutions();
       },
       state.state,
     );
@@ -259,6 +261,7 @@
         inputs.area.value = state.area;
         setValue('area', state.area, 'All areas');
         syncLocation();
+        renderInstitutions();
       },
       state.area,
     );
@@ -270,10 +273,32 @@
     return place ? `${base} · ${place}` : base;
   };
 
+  const institutionCountry = (item) => {
+    const loc = locations.find((entry) => entry.id === item.location_id);
+    return loc ? loc.country : '';
+  };
+
+  const filteredInstitutions = () => {
+    let list = institutions.filter((item) => {
+      if (state.country && institutionCountry(item).toLowerCase() !== state.country.toLowerCase()) return false;
+      if (state.state && String(item.state || '').toLowerCase() !== String(state.state || '').toLowerCase()) return false;
+      if (state.area && String(item.area || '').toLowerCase() !== String(state.area || '').toLowerCase()) return false;
+      return true;
+    });
+    // Alphabetical with Nigeria first
+    list = [...list].sort((a, b) => {
+      const aNigeria = institutionCountry(a).toLowerCase() === 'nigeria' ? 0 : 1;
+      const bNigeria = institutionCountry(b).toLowerCase() === 'nigeria' ? 0 : 1;
+      if (aNigeria !== bNigeria) return aNigeria - bNigeria;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || String(a.state || '').localeCompare(String(b.state || ''), undefined, { sensitivity: 'base' });
+    });
+    return list;
+  };
+
   const renderInstitutions = () => {
     renderOptions(
       'institution',
-      institutions.map((item) => ({ value: String(item.id), label: institutionLabel(item) })),
+      filteredInstitutions().map((item) => ({ value: String(item.id), label: institutionLabel(item) })),
       (item) => {
         const record = institutions.find((entry) => String(entry.id) === item.value);
         if (!record) return;
@@ -303,6 +328,7 @@
         renderStates();
         renderAreas();
         syncLocation();
+        renderInstitutions();
       },
       state.institution,
     );

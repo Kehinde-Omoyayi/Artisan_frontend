@@ -35,7 +35,28 @@
           {% if field.errors %}<div class="field-error" role="alert">{{ field.errors|striptags }}</div>{% endif %}
         </div>
         {% endfor %}
-        <div class="payout-form-footer"><p>Bank confirmation does not by itself enable payouts. Protected finance verification is still required.</p><button class="button button-primary payout-save" type="submit">Verify and save payout details <span aria-hidden="true">→</span></button></div>
+        <div class="payout-form-footer">
+          {% if payout_locked %}
+          <div class="payout-lock-banner" role="status"><span aria-hidden="true">&#128274;</span><span>Payout details are locked for your protection. You can change them again from {{ locked_until|date:"j M Y, H:i" }}.</span></div>
+          {% endif %}
+          <p>Bank confirmation does not by itself enable payouts. Protected finance verification is still required.</p>
+          {% if change_mode %}
+          <input type="hidden" name="change_mode" value="1">
+          <button class="button button-primary payout-save" type="submit">Verify and save new payout details <span aria-hidden="true">→</span></button>
+          <div class="payout-secondary-actions">
+            <button type="submit" name="action" value="request_code" formnovalidate class="payout-secondary-action">Resend security code</button>
+            <button type="submit" name="action" value="cancel_change" formnovalidate class="payout-secondary-action">Cancel change</button>
+          </div>
+          {% elif has_saved_account %}
+          {% if payout_locked %}
+          <button class="button button-primary payout-save" type="submit" name="action" value="request_code" disabled>Locked until {{ locked_until|date:"j M Y" }} <span aria-hidden="true">&#128274;</span></button>
+          {% else %}
+          <button class="button button-primary payout-save" type="submit" name="action" value="request_code">Change payout details — email me a code <span aria-hidden="true">→</span></button>
+          {% endif %}
+          {% else %}
+          <button class="button button-primary payout-save" type="submit">Verify and save payout details <span aria-hidden="true">→</span></button>
+          {% endif %}
+        </div>
       </form>
     </article>
     <aside class="payout-sidebar">
@@ -46,6 +67,7 @@
           <div><span>Account Name</span><strong>{{ account.account_name }}</strong></div>
           <div><span>Bank</span><strong>{{ account.bank_name|default:account.bank_code|default:'—' }}</strong></div>
           <div><span>Account Number</span><strong>{% if account.account_number_last4 %}•••• {{ account.account_number_last4 }}{% else %}—{% endif %}</strong></div>
+          <div><span>Change lock</span><strong>{% if payout_locked %}Locked until {{ locked_until|date:"j M Y" }}{% else %}Unlocked — email code required to change{% endif %}</strong></div>
         </div>
         {% else %}<div class="payout-empty"><span aria-hidden="true">▤</span><h3>No saved account yet</h3><p>Your saved payout account will appear here after you submit your details.</p></div>{% endif %}
         <p class="payout-privacy">For your privacy, only the last four account-number digits are displayed.</p>
