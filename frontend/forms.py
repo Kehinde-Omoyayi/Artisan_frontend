@@ -2,6 +2,7 @@ import json
 import re
 
 from django import forms
+from .geography import canonical_location
 from .profile_catalogue import initialize_profile_location, clean_profile_location
 from django.utils import timezone
 
@@ -505,7 +506,7 @@ class PromotionApplicationForm(StyledForm):
     )
     promotional_description = forms.CharField(
         label="Promotion description",
-        min_length=40,
+        min_length=10,
         max_length=1200,
         help_text="Describe your work and why this promotion target is relevant. Do not include identity numbers or sensitive information.",
         widget=forms.Textarea(attrs={"rows": 5, "maxlength": 1200}),
@@ -739,6 +740,14 @@ class ServiceRequestForm(StyledForm):
         required=False,
         widget=forms.HiddenInput(),
     )
+    # Optional reference only: choosing an institution fills country/state/area;
+    # it is never saved on its own.
+    institution = forms.CharField(
+        label="Closest institution (optional)",
+        max_length=220,
+        required=False,
+        widget=forms.HiddenInput(),
+    )
     # Resolved from country/state/area in clean(); never entered by the customer.
     location_id = forms.CharField(required=False, widget=forms.HiddenInput())
     preferred_date = forms.DateField(
@@ -931,14 +940,14 @@ class ArtisanServiceForm(StyledForm):
         ),
         help_text="Optional reference only. Choose a registered marketplace location below; no institution or new location is saved.",
     )
-    location_id = forms.ChoiceField(
+    location_id = forms.CharField(
         label="Service coverage",
-        choices=[
-            ("", "Choose a registered location or Anywhere"),
-            ("__anywhere__", "Anywhere — available across locations"),
-        ],
-        help_text="Specific locations come only from the existing marketplace catalogue. Anywhere uses the API’s existing general-offering contract.",
-        widget=forms.Select(attrs={"data-location-anywhere-value": "__anywhere__"}),
+        required=False,
+        max_length=32,
+        help_text=(
+            "Anywhere uses the API's general-offering contract. Otherwise pick a "
+            "country, state and area from the geographic catalogue."
+        ),
     )
     starting_price = forms.DecimalField(
         label="Starting budget",
@@ -949,14 +958,22 @@ class ArtisanServiceForm(StyledForm):
         help_text="Optional starting budget for this service offering.",
     )
 
+    ANYWHERE_COVERAGE_VALUE = "__anywhere__"
+    GEOGRAPHIC_COVERAGE_VALUE = "__geo__"
+
     def __init__(self, *args, categories=None, services=None, locations=None, **kwargs):
         super().__init__(*args, **kwargs)
         categories = categories or []
         services = services or []
-        locations = locations or []
-        _apply_location_controls(self, locations)
-        if not self.is_bound and not str(self.initial.get("location_id") or "").strip():
-            self.initial.setdefault("institution", "FUNAAB")
+        # Location choices come from the client-side geographic catalogue; the
+        # hidden coverage field only ever carries a sentinel value.
+        self.fields["location_id"].widget.attrs["data-location-anywhere-value"] = (
+            self.ANYWHERE_COVERAGE_VALUE
+        )
+        if not self.is_bound:
+            if not str(self.initial.get("location_id") or "").strip():
+                self.initial["location_id"] = self.ANYWHERE_COVERAGE_VALUE
+            self.initial.setdefault("location_country_filter", "Nigeria")
 
         category_names = sorted(
             {
@@ -993,21 +1010,6 @@ class ArtisanServiceForm(StyledForm):
             )
         ]
 
-        location_choices = [
-            ("", "Choose a registered location or Anywhere"),
-            ("__anywhere__", "Anywhere — available across locations"),
-        ]
-        for location in locations:
-            if not isinstance(location, dict) or not location.get("id"):
-                continue
-            area = str(location.get("area", "")).strip()
-            state = str(location.get("state", "")).strip()
-            country = str(location.get("country", "")).strip()
-            label = ", ".join(part for part in (area, state, country) if part)
-            if label:
-                location_choices.append((str(location["id"]), label))
-        self.fields["location_id"].choices = location_choices
-
         self._service_category_by_name = self.service_category_by_name
 
     def clean(self):
@@ -1019,10 +1021,29 @@ class ArtisanServiceForm(StyledForm):
             self.add_error(
                 "service_name", "Choose a service from the selected category."
             )
-        cleaned.pop("location_country_filter", None)
-        cleaned.pop("location_state_filter", None)
-        cleaned.pop("location_area_filter", None)
-        cleaned.pop("institution", None)
+
+        coverage = str(cleaned.get("location_id") or "").strip()
+        if coverage == self.ANYWHERE_COVERAGE_VALUE:
+            cleaned["resolved_location"] = None
+        elif coverage == self.GEOGRAPHIC_COVERAGE_VALUE:
+            canonical = canonical_location(
+                cleaned.get("location_country_filter"),
+                cleaned.get("location_state_filter"),
+                cleaned.get("location_area_filter"),
+            )
+            if canonical is None:
+                raise forms.ValidationError(
+                    "Choose coverage as Anywhere, or pick a country, state and "
+                    "area from the geographic catalogue."
+                )
+            cleaned["location_country_filter"] = canonical["country"]
+            cleaned["location_state_filter"] = canonical["state"]
+            cleaned["location_area_filter"] = canonical["area"]
+            cleaned["resolved_location"] = canonical
+        else:
+            raise forms.ValidationError(
+                "Choose coverage as Anywhere, or pick a country, state and area."
+            )
         return cleaned
 
 

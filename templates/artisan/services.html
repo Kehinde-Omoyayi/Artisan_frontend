@@ -198,6 +198,11 @@
 /* --- budget -------------------------------------------------------------- */
 .artisan-service-budget { margin-top: 16px; }
 .artisan-service-budget label { display: block; margin-bottom: 6px; font-size: 12.5px; font-weight: 700; }
+.artisan-coverage-field { margin-top: 16px; }
+.artisan-coverage-field-label { display: block; margin-bottom: 6px; font-size: 12.5px; font-weight: 700; color: #5d4636; }
+.artisan-coverage-field-help { display: block; margin: 0 0 10px; color: #8a7663; font-size: 11px; line-height: 1.6; }
+.artisan-location-picks-title { margin-bottom: 2px; }
+.artisan-location-picks-help { margin: 0 0 10px; color: #8a7663; font-size: 11px; line-height: 1.6; }
 .artisan-service-budget input { width: 100%; }
 .artisan-service-budget .help { display: block; margin-top: 6px; color: #8a7663; font-size: 11px; }
 
@@ -220,7 +225,7 @@
         <div><span class="artisan-panel-kicker">{% if editing_item %}Update an offering{% else %}Grow your catalogue{% endif %}</span><h2>{% if editing_item %}Edit service{% else %}Add a service{% endif %}</h2></div>
         <span class="artisan-panel-mark" aria-hidden="true">{% if editing_item %}✎{% else %}＋{% endif %}</span>
       </div>
-      <p class="artisan-form-intro">Pick a catalogue service, then choose <strong>Anywhere</strong> or one registered marketplace location. This form never creates new locations.</p>
+      <p class="artisan-form-intro">Pick a catalogue service, choose its coverage (<strong>Anywhere</strong> or a location from the geographic catalogue), then set a starting budget.</p>
 
       <div class="artisan-service-limit" data-service-limit {% if not at_limit %}hidden{% endif %} role="status">
         <span aria-hidden="true">◆</span>
@@ -228,7 +233,7 @@
         Remove an offering below to add a different one. You can still edit the {{ max_services }} you have.</span>
       </div>
 
-      <form method="post" class="js-submit-form artisan-service-form" data-artisan-form data-service-filter-form data-service-picker-form data-anywhere-value="{{ anywhere_value }}" data-max-services="{{ max_services }}" data-service-count="{{ service_count }}">
+      <form method="post" class="js-submit-form artisan-service-form" data-artisan-form data-service-filter-form data-service-picker-form data-anywhere-value="{{ anywhere_value }}" data-geographic-value="{{ geographic_value }}" data-max-services="{{ max_services }}" data-service-count="{{ service_count }}">
         {% csrf_token %}
         {{ form.category_name.as_hidden }}
         {{ form.service_name.as_hidden }}
@@ -269,17 +274,23 @@
           </section>
         </div>
 
-        <div class="artisan-coverage">
-          <button class="artisan-coverage-toggle" type="button" data-anywhere-toggle aria-pressed="true">
-            <span class="artisan-coverage-switch" aria-hidden="true"><span class="artisan-coverage-knob"></span></span>
-            <span class="artisan-coverage-copy">
-              <strong>Anywhere</strong>
-              <small data-anywhere-caption>Available across all locations</small>
-            </span>
-          </button>
+        <div class="form-field artisan-coverage-field">
+          <span class="artisan-coverage-field-label">Availability / coverage</span>
+          <small class="artisan-coverage-field-help help">Choose where this service can be delivered. Anywhere means you accept clients from every location; turn it off to serve one catalogue location.</small>
+          <div class="artisan-coverage">
+            <button class="artisan-coverage-toggle" type="button" data-anywhere-toggle aria-pressed="true">
+              <span class="artisan-coverage-switch" aria-hidden="true"><span class="artisan-coverage-knob"></span></span>
+              <span class="artisan-coverage-copy">
+                <strong>Anywhere</strong>
+                <small data-anywhere-caption>Available across all locations</small>
+              </span>
+            </button>
+          </div>
         </div>
 
         <div class="artisan-service-pickers artisan-location-picks" data-location-rows hidden>
+          <span class="artisan-coverage-field-label artisan-location-picks-title">Service location</span>
+          <small class="help artisan-location-picks-help">Pick a country, state and area from the geographic catalogue. Choosing a closest institution fills them in for you.</small>
           <section class="artisan-pick" data-service-row data-picker-key="country">
             <button class="artisan-pick-head" type="button" data-picker-toggle aria-expanded="false" aria-controls="pick-country">
               <span class="artisan-pick-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.6 12h16.8M12 3.6c2.4 2.3 3.7 5.2 3.7 8.4s-1.3 6.1-3.7 8.4c-2.4-2.3-3.7-5.2-3.7-8.4S9.6 5.9 12 3.6Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
@@ -343,7 +354,7 @@
         </div>
 
         {% if editing_item %}<input type="hidden" name="offering_id" value="{{ editing_item.id }}">{% endif %}
-        {{ location_records|json_script:"service-location-records" }}
+        {{ geography_records|json_script:"service-geography-records" }}
         {{ institutions|json_script:"service-institution-records" }}
         {{ service_catalog|json_script:"service-catalogue-records" }}
       </form>

@@ -143,6 +143,19 @@ Every control is the same glass picker used by the discovery filters.
 
   {% if form.location_area_filter.errors %}<p class="request-pick-error">{% for error in form.location_area_filter.errors %}{{ error }}{% endfor %}</p>{% endif %}
 
+  <section class="request-pick" data-request-row data-pick-key="institution">
+    <button class="request-pick-head" type="button" data-pick-toggle aria-expanded="false" aria-controls="request-pick-institution">
+      <span class="request-pick-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="M4 20.4h16M6.2 20.4V9.6M17.8 20.4V9.6M3.4 9.6 12 4l8.6 5.6M9.4 20.4v-5.2h5.2v5.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg></span>
+      <span class="request-pick-label">Closest institution</span>
+      <span class="request-pick-value is-placeholder" data-pick-value>Optional</span>
+      <span class="request-pick-chevron" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
+    </button>
+    <div class="request-pick-body" id="request-pick-institution" data-pick-body hidden>
+      <div class="request-pick-options" role="listbox" aria-label="Closest institution" data-pick-options="institution"></div>
+      <p class="request-pick-empty" data-pick-empty="institution" hidden>No institutions match the selected location; choose a country, state or area above, or leave this optional field empty.</p>
+    </div>
+  </section>
+
   <section class="request-pick" data-request-row data-pick-key="date">
     <button class="request-pick-head" type="button" data-pick-toggle aria-expanded="false" aria-controls="request-pick-date">
       <span class="request-pick-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><rect x="3.6" y="5.4" width="16.8" height="15" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.6 10h16.8M8 3.6v3.4M16 3.6v3.4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg></span>
@@ -203,6 +216,7 @@ Every control is the same glass picker used by the discovery filters.
 
 {{ form.category_name }}
 {{ form.service_name }}
+{{ form.institution }}
 {{ form.location_country_filter }}
 {{ form.location_state_filter }}
 {{ form.location_area_filter }}

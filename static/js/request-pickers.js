@@ -37,6 +37,7 @@
   const inputs = {
     category: field('category_name'),
     service: field('service_name'),
+    institution: field('institution'),
     country: field('location_country_filter'),
     state: field('location_state_filter'),
     area: field('location_area_filter'),
@@ -53,12 +54,15 @@
   const state = {
     category: inputs.category.value || '',
     service: inputs.service.value || '',
+    institution: '',
     country: inputs.country ? inputs.country.value : '',
     state: inputs.state ? inputs.state.value : '',
     area: inputs.area ? inputs.area.value : '',
     date: inputs.date ? inputs.date.value : '',
     urgency: inputs.urgency ? (inputs.urgency.value || 'NORMAL') : 'NORMAL',
   };
+
+  const institutions = (data.institutions || []).filter((item) => item && item.id && item.name);
 
   const URGENCY = [
     { value: 'LOW', label: 'Low' },
@@ -224,6 +228,7 @@
         setValue('area', '', 'All areas');
         renderState();
         renderArea();
+        renderInstitution();
       },
       state.country,
     );
@@ -242,6 +247,7 @@
         setValue('state', state.state, 'All states');
         setValue('area', '', 'All areas');
         renderArea();
+        renderInstitution();
       },
       state.state,
     );
@@ -264,10 +270,76 @@
         state.area = item.value;
         if (inputs.area) inputs.area.value = state.area;
         setValue('area', state.area, 'All areas');
+        renderInstitution();
       },
       state.area,
     );
     setValue('area', state.area, state.state ? 'All areas' : 'Choose a state first');
+  };
+
+  /* ---------------------------------------------------------- institution */
+
+  const institutionLabel = (item) => {
+    const abbr = item.abbreviation ? ` (${item.abbreviation})` : '';
+    const place = [item.area, item.state].filter(Boolean).join(', ');
+    return `${item.name}${abbr}${place ? ' · ' + place : ''}`;
+  };
+
+  const filteredInstitutions = () => {
+    const list = institutions.filter((item) => {
+      if (state.country && String(item.country || '').toLowerCase() !== state.country.toLowerCase()) return false;
+      if (state.state && String(item.state || '').toLowerCase() !== state.state.toLowerCase()) return false;
+      if (state.area && String(item.area || '').toLowerCase() !== state.area.toLowerCase()) return false;
+      return true;
+    });
+    // Alphabetical with Nigeria first, regardless of the current filter.
+    return [...list].sort((a, b) => {
+      const aNigeria = String(a.country || '').toLowerCase() === 'nigeria' ? 0 : 1;
+      const bNigeria = String(b.country || '').toLowerCase() === 'nigeria' ? 0 : 1;
+      if (aNigeria !== bNigeria) return aNigeria - bNigeria;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+        || String(a.state || '').localeCompare(String(b.state || ''), undefined, { sensitivity: 'base' });
+    });
+  };
+
+  const renderInstitution = () => {
+    if (!rows.institution) return;
+    const options = [{ value: '', label: 'None — skip this step' }].concat(
+      filteredInstitutions().map((item) => ({ value: String(item.id), label: institutionLabel(item) }))
+    );
+    renderOptions(
+      'institution',
+      options,
+      (item) => {
+        if (!item.value) {
+          state.institution = '';
+          if (inputs.institution) inputs.institution.value = '';
+          setValue('institution', '', 'Optional');
+          return;
+        }
+        const record = institutions.find((entry) => String(entry.id) === item.value);
+        if (!record) return;
+        state.institution = String(record.id);
+        if (inputs.institution) inputs.institution.value = institutionLabel(record);
+        setValue('institution', institutionLabel(record), 'Optional');
+
+        // Picking an institution fills the geographic pickers from its record.
+        state.country = record.country || state.country;
+        state.state = record.state || state.state;
+        state.area = record.area || state.area;
+        if (inputs.country) inputs.country.value = state.country;
+        if (inputs.state) inputs.state.value = state.state;
+        if (inputs.area) inputs.area.value = state.area;
+        setValue('country', state.country, 'All countries');
+        setValue('state', state.state, 'All states');
+        setValue('area', state.area, 'All areas');
+        renderCountry();
+        renderState();
+        renderArea();
+        renderInstitution();
+      },
+      state.institution,
+    );
   };
 
   const renderUrgency = () => {
@@ -440,6 +512,7 @@
   renderCountry();
   renderState();
   renderArea();
+  renderInstitution();
   renderUrgency();
   renderCalendar();
   setValue('date', pretty(state.date), 'Choose a date');

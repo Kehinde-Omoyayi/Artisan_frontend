@@ -7,8 +7,9 @@
  *
  * Location rules
  *  - "Anywhere" on  -> location_id = __anywhere__ (the API's general offering)
- *  - "Anywhere" off -> Country > State > Area pick the exact catalogue row and
- *    location_id becomes that row's id.
+ *  - "Anywhere" off -> Country > State > Area pick any place in the worldwide
+ *    geographic catalogue (the same data as the public discovery filters) and
+ *    location_id becomes the __geo__ sentinel; the server resolves the names.
  *
  * Every picker writes into the existing hidden Django form fields, so the
  * server-side validation in ArtisanServiceForm is untouched.
@@ -28,11 +29,23 @@
     }
   };
 
-  const locations = readJSON('service-location-records', []);
+  const readJSONObject = (id, fallback) => {
+    const node = document.getElementById(id);
+    if (!node) return fallback;
+    try {
+      const value = JSON.parse(node.textContent);
+      return value && !Array.isArray(value) && typeof value === 'object' ? value : fallback;
+    } catch (error) {
+      return fallback;
+    }
+  };
+
+  const geography = readJSONObject('service-geography-records', {});
   const institutions = readJSON('service-institution-records', []);
   const catalogue = readJSON('service-catalogue-records', []);
 
   const anywhereValue = form.dataset.anywhereValue || '__anywhere__';
+  const geographicValue = form.dataset.geographicValue || '__geo__';
   const maxServices = Number.parseInt(form.dataset.maxServices || '3', 10) || 3;
   const serviceCount = Number.parseInt(form.dataset.serviceCount || '0', 10) || 0;
 
@@ -78,25 +91,22 @@
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
   const categories = uniqueSorted(catalogueServices.map((item) => item.category));
-  const countries = uniqueSorted(locations.map((item) => item.country));
+  const countries = uniqueSorted(Object.keys(geography));
 
   const statesFor = (countryName) =>
-    uniqueSorted(locations.filter((item) => !countryName || item.country === countryName).map((item) => item.state));
+    countryName ? uniqueSorted(Object.keys(geography[countryName] || {})) : [];
 
   const areasFor = (countryName, stateName) =>
-    uniqueSorted(
-      locations
-        .filter((item) => (!countryName || item.country === countryName) && (!stateName || item.state === stateName))
-        .map((item) => item.area),
-    );
+    countryName && stateName
+      ? uniqueSorted((geography[countryName] || {})[stateName] || [])
+      : [];
 
+  // A complete geographic pick resolves to the __geo__ sentinel; the server
+  // validates the names against the same catalogue and registers them.
   const locationFor = (countryName, stateName, areaName) =>
-    locations.find(
-      (item) =>
-        (!countryName || item.country === countryName) &&
-        (!stateName || item.state === stateName) &&
-        (!areaName || item.area === areaName),
-    ) || null;
+    countryName && stateName && areaName
+      ? { id: geographicValue, country: countryName, state: stateName, area: areaName }
+      : null;
 
   const closeRows = (except) => {
     Object.values(rows).forEach((row) => {
@@ -268,15 +278,12 @@
   };
 
   const institutionLabel = (item) => {
-    const base = item.campus ? `${item.name} — ${item.campus}` : item.name;
+    const abbr = item.abbreviation ? ` (${item.abbreviation})` : '';
     const place = [item.area, item.state].filter(Boolean).join(', ');
-    return place ? `${base} · ${place}` : base;
+    return `${item.name}${abbr}${place ? ' · ' + place : ''}`;
   };
 
-  const institutionCountry = (item) => {
-    const loc = locations.find((entry) => entry.id === item.location_id);
-    return loc ? loc.country : '';
-  };
+  const institutionCountry = (item) => String(item.country || '');
 
   const filteredInstitutions = () => {
     let list = institutions.filter((item) => {
@@ -306,21 +313,10 @@
         inputs.institution.value = institutionLabel(record);
         setValue('institution', institutionLabel(record), 'Optional');
 
-        // Picking an institution is a shortcut to the location it belongs to.
-        const location = locations.find((entry) => entry.id === record.location_id)
-          || locationFor(
-            locations.find((entry) => entry.id === record.location_id)?.country || '',
-            record.state,
-            record.area,
-          );
-        if (location) {
-          state.country = location.country;
-          state.state = location.state;
-          state.area = location.area;
-        } else {
-          state.state = record.state || state.state;
-          state.area = record.area || state.area;
-        }
+        // Picking an institution fills the geographic pickers from its record.
+        state.country = record.country || state.country;
+        state.state = record.state || state.state;
+        state.area = record.area || state.area;
         inputs.country.value = state.country;
         inputs.state.value = state.state;
         inputs.area.value = state.area;

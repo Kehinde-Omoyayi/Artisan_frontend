@@ -3825,11 +3825,28 @@ def _request_picker_catalogue(form):
         for value, label in form.fields["category_name"].choices
         if value
     ]
+    from .profile_catalogue import all_institutions
+
     return {
         "categories": categories,
         "services": services,
         "locations": form.location_records,
         "geography": _request_geography(form.location_records),
+        # Optional "closest institution" picker: same catalogue, ordering and
+        # filter semantics as the artisan service form (Nigeria first,
+        # alphabetical, reduced by any chosen geography).
+        "institutions": [
+            {
+                "id": str(row.get("source_id") or ""),
+                "name": str(row.get("name") or ""),
+                "abbreviation": next(iter(row.get("abbreviations") or []), ""),
+                "country": str(row.get("country") or ""),
+                "state": str(row.get("state") or ""),
+                "area": str(row.get("area") or ""),
+            }
+            for row in all_institutions()
+            if isinstance(row, dict) and row.get("source_id")
+        ],
         # The browser clock can sit in another time zone; the marketplace's
         # "today" is what the API validates against, so ship it with the data.
         "today": timezone.localdate().isoformat(),
@@ -4410,7 +4427,11 @@ ANYWHERE_LOCATION_VALUE = "__anywhere__"
 MAX_ARTISAN_SERVICES = 3
 
 
+GEOGRAPHIC_COVERAGE_VALUE = "__geo__"
+
+
 def _location_id_for_service(item_location, locations):
+    """Map a saved location onto the backend marketplace catalogue (request forms)."""
     if item_location is None:
         return ANYWHERE_LOCATION_VALUE
     if not isinstance(item_location, dict):
@@ -4433,43 +4454,35 @@ def _location_id_for_service(item_location, locations):
     return ""
 
 
-def _artisan_service_form_initial(item, locations):
-    return {
+def _artisan_service_form_initial(item):
+    initial = {
         "category_name": item.get("category_name", ""),
         "service_name": item.get("service_name", ""),
-        "location_id": _location_id_for_service(item.get("location"), locations),
         "starting_price": item.get("starting_price", ""),
     }
-
-
-def _artisan_service_payload(cleaned_data, locations):
-    location_by_id = {
-        str(location.get("id")): location
-        for location in locations
-        if isinstance(location, dict) and location.get("id")
-    }
-    selected_location_id = str(cleaned_data.get("location_id", "") or "")
-    if selected_location_id == ANYWHERE_LOCATION_VALUE:
-        selected_location = None
+    location = item.get("location")
+    if isinstance(location, dict) and any(
+        str(location.get(key) or "").strip() for key in ("country", "state", "area")
+    ):
+        # Existing localized offering: prefill the geographic pickers from the
+        # saved location names.
+        initial["location_id"] = GEOGRAPHIC_COVERAGE_VALUE
+        for key in ("country", "state", "area"):
+            initial[f"location_{key}_filter"] = str(location.get(key) or "")
     else:
-        selected_location = location_by_id.get(selected_location_id)
-        if not selected_location:
-            raise ValueError(
-                "Choose Anywhere or a location from the existing marketplace catalogue."
-            )
+        initial["location_id"] = ANYWHERE_LOCATION_VALUE
+    return initial
 
+
+def _artisan_service_payload(cleaned_data):
+    resolved_location = cleaned_data.get("resolved_location")
     payload = {
         # The API resolves service_name and derives category_name from that service.
-        # A null location is the existing general-offering/Anywhere contract.
+        # A null location is the existing general-offering/Anywhere contract; a
+        # catalogue {country, state, area} triple is resolved (and registered on
+        # first use) by the API.
         "service_name": cleaned_data["service_name"],
-        "location": (
-            {
-                key: selected_location.get(key, "")
-                for key in ("country", "state", "area")
-            }
-            if selected_location is not None
-            else None
-        ),
+        "location": resolved_location,
     }
     starting_price = cleaned_data.get("starting_price")
     if starting_price is not None:
@@ -4481,7 +4494,7 @@ def _artisan_service_payload(cleaned_data, locations):
 @api_guard
 def artisan_services(request):
     client = APIClient(request)
-    catalog = _artisan_service_catalog(request, client, include_institutions=True)
+    catalog = _artisan_service_catalog(request, client)
     try:
         _, payload, _ = client.get("/services/get_artisan_services/")
         items = extract_items(payload)
@@ -4534,23 +4547,18 @@ def artisan_services(request):
             editing_id = ""
 
     initial = (
-        _artisan_service_form_initial(editing_item, catalog["locations"])
-        if editing_item
-        else None
+        _artisan_service_form_initial(editing_item) if editing_item else None
     )
     form = ArtisanServiceForm(
         request.POST or None,
         initial=initial,
         categories=catalog["categories"],
         services=catalog["services"],
-        locations=catalog["locations"],
     )
 
     if request.method == "POST" and form.is_valid():
         try:
-            service_payload = _artisan_service_payload(
-                form.cleaned_data, catalog["locations"]
-            )
+            service_payload = _artisan_service_payload(form.cleaned_data)
             if editing_id:
                 path = replace_path(
                     "/services/get_artisan_services/{pk}/", pk=editing_id
@@ -4570,6 +4578,9 @@ def artisan_services(request):
             request, "Please correct the highlighted fields before saving this service."
         )
 
+    from .geography import world_geography
+    from .profile_catalogue import all_institutions
+
     return page(
         request,
         "artisan/services.html",
@@ -4577,30 +4588,26 @@ def artisan_services(request):
         form=form,
         editing_item=editing_item,
         service_catalog=catalog["services"],
-        location_records=[
-            {
-                "id": str(location.get("id")),
-                "country": str(location.get("country") or ""),
-                "state": str(location.get("state") or ""),
-                "area": str(location.get("area") or ""),
-            }
-            for location in catalog["locations"]
-            if isinstance(location, dict) and location.get("id")
-        ],
+        # Same data source as the public discovery filters: the worldwide
+        # geographic catalogue and the institution catalogue (alphabetical,
+        # Nigeria first when no geography is chosen).
+        geography_records=world_geography(),
         institutions=[
             {
-                "id": str(item.get("id")),
-                "name": str(item.get("name") or ""),
-                "campus": str(item.get("campus") or ""),
-                "abbreviation": str(item.get("abbreviation") or ""),
-                "location_id": str(item.get("location_id") or ""),
-                "state": str(item.get("state") or ""),
-                "area": str(item.get("area") or ""),
+                "id": str(row.get("source_id") or ""),
+                "name": str(row.get("name") or ""),
+                "abbreviation": next(
+                    iter(row.get("abbreviations") or []), ""
+                ),
+                "country": str(row.get("country") or ""),
+                "state": str(row.get("state") or ""),
+                "area": str(row.get("area") or ""),
             }
-            for item in catalog["institutions"]
-            if isinstance(item, dict) and item.get("id")
+            for row in all_institutions()
+            if isinstance(row, dict) and row.get("source_id")
         ],
         anywhere_value=ANYWHERE_LOCATION_VALUE,
+        geographic_value=GEOGRAPHIC_COVERAGE_VALUE,
         service_count=service_count,
         max_services=MAX_ARTISAN_SERVICES,
         at_limit=at_limit,
@@ -5005,7 +5012,7 @@ def payout_account(request):
                 )
                 messages.success(
                     request,
-                    "Flutterwave confirmed the bank account name. The payout account is awaiting protected finance verification and is now locked for 3 days; payouts are not enabled yet.",
+                    "Flutterwave verified and activated your payout account. It is now locked from changes for 3 days.",
                 )
                 return redirect("payout-account")
             except APIError as exc:
