@@ -21,11 +21,6 @@ urlpatterns = [
         views.start_conversation,
         name="start-conversation",
     ),
-    path(
-        "artisans/<uuid:pk>/message/",
-        views.start_direct_conversation,
-        name="start-direct-conversation",
-    ),
     path("conversations/", views.conversation_inbox, name="conversation-inbox"),
     path(
         "conversations/<uuid:conversation_id>/",

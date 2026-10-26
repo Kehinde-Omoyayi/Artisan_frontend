@@ -1,15 +1,15 @@
 'use strict';
 
-const SHELL_CACHE = 'artisan-market-offline-v2';
-const OFFLINE_PAGE = '/offline/request-assistant/';
+// v3: the offline request-assistant page and its rule-based draft mirroring
+// were removed with the request-first workflow. This worker now only keeps
+// static assets fresh (stale-while-revalidate); pages require the network so
+// booking/payment state is always read live from the server.
+const SHELL_CACHE = 'artisan-market-shell-v3';
 const PRECACHE_URLS = [
-  OFFLINE_PAGE,
   '/static/css/site.css',
   '/static/css/conversations.css',
-  '/static/css/offline-request-assistant.css',
   '/static/js/api-errors.js',
   '/static/js/site.js',
-  '/static/js/pages/offline-request-assistant.js',
   '/static/fonts/DMSans-Latin-Variable.woff2',
   '/static/fonts/DMSerifDisplay-Regular.woff2',
 ];
@@ -26,32 +26,13 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(keys
-        .filter((key) => key.startsWith('artisan-market-offline-') && key !== SHELL_CACHE)
+        // Drop every previous shell generation, including the retired
+        // artisan-market-offline-* caches that contained the offline draft app.
+        .filter((key) => (key.startsWith('artisan-market-offline-') || key.startsWith('artisan-market-shell-')) && key !== SHELL_CACHE)
         .map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });
-
-async function cachedOfflinePage() {
-  return (await caches.match(OFFLINE_PAGE, { ignoreSearch: true }))
-    || new Response('Offline draft workspace is not available yet. Reconnect once to install it.', {
-      status: 503,
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-    });
-}
-
-async function networkFirstPage(request) {
-  try {
-    const response = await fetch(request);
-    if (response && response.ok && new URL(request.url).pathname === OFFLINE_PAGE) {
-      const cache = await caches.open(SHELL_CACHE);
-      await cache.put(OFFLINE_PAGE, response.clone());
-    }
-    return response;
-  } catch (_error) {
-    return cachedOfflinePage();
-  }
-}
 
 // Static assets are served from the cache for speed but always refreshed in the
 // background. A shipped stylesheet or script can therefore never be pinned to an
@@ -73,16 +54,6 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-
-  if (url.pathname === OFFLINE_PAGE) {
-    event.respondWith(networkFirstPage(request));
-    return;
-  }
-
-  if (request.mode === 'navigate' && /^\/discover\/conversations\/[0-9a-f-]{36}\/?$/i.test(url.pathname)) {
-    event.respondWith(fetch(request).catch(() => cachedOfflinePage()));
-    return;
-  }
 
   if (url.pathname.startsWith('/static/')) {
     event.respondWith(staleWhileRevalidateAsset(request));

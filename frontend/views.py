@@ -222,7 +222,7 @@ def _pending_action_target(request, action):
         return reverse("home")
     if action.get("kind") == "service_request_draft":
         return _service_request_resume_url()
-    if action.get("kind") in {"direct_artisan_message", "service_conversation"}:
+    if action.get("kind") == "service_conversation":
         try:
             artisan_id = UUID(str(action.get("artisan_id", "")))
         except (TypeError, ValueError, AttributeError):
@@ -360,29 +360,17 @@ def _ensure_action_profile_complete(request, action, *, role, destination):
 def _capture_anonymous_post(request, view_name, kwargs):
     if request.method != "POST":
         return safe_internal_next(request, request.get_full_path()) or reverse("home")
-    if view_name in {"start_direct_conversation", "start_conversation"}:
+    if view_name == "start_conversation":
         try:
             artisan_id = UUID(str(kwargs.get("pk", "")))
         except (TypeError, ValueError, AttributeError):
             return reverse("artisans")
         detail_target = _artisan_detail_return_target(request, artisan_id)
-        if view_name == "start_direct_conversation":
-            initial_message = str(
-                request.POST.get("initial_message", "") or ""
-            ).strip()[:5000]
-            _store_pending_action(
-                request,
-                "direct_artisan_message",
-                artisan_id=str(artisan_id),
-                initial_message=initial_message,
-                return_to=detail_target,
-            )
-        else:
-            service_id = str(request.POST.get("service_id", "") or "").strip()
-            action = {"artisan_id": str(artisan_id), "return_to": detail_target}
-            if service_id.isdigit():
-                action["service_id"] = service_id
-            _store_pending_action(request, "service_conversation", **action)
+        service_id = str(request.POST.get("service_id", "") or "").strip()
+        action = {"artisan_id": str(artisan_id), "return_to": detail_target}
+        if service_id.isdigit():
+            action["service_id"] = service_id
+        _store_pending_action(request, "service_conversation", **action)
         return detail_target
     if view_name == "service_requests":
         request.session[PENDING_REQUEST_DRAFT_SESSION_KEY] = (
@@ -491,18 +479,20 @@ def _continue_pending_protected_action(request):
         )
         return redirect(destination)
 
-    if kind not in {"direct_artisan_message", "service_conversation"}:
+    if kind != "service_conversation":
+        # Legacy direct-chat pending actions predate the request-first flow; they
+        # cannot be replayed safely, so they expire like any stale saved action.
         _clear_pending_action(request, clear_draft=True)
+        messages.info(
+            request,
+            "That saved action is no longer available. Start from the artisan's request form instead.",
+        )
         return redirect(reverse("home"))
-    if kind == "service_conversation" and role != "customer":
+    if role != "customer":
         _clear_pending_action(request)
         messages.error(
             request, "Only customer accounts can request an artisan service."
         )
-        return redirect(destination)
-    if kind == "direct_artisan_message" and role not in {"customer", "artisan"}:
-        _clear_pending_action(request)
-        messages.error(request, "This account cannot start an artisan conversation.")
         return redirect(destination)
 
     completion = _ensure_action_profile_complete(
@@ -516,24 +506,16 @@ def _continue_pending_protected_action(request):
 
     client = APIClient(request)
     try:
-        if kind == "direct_artisan_message":
-            _, conversation, _ = client.post(
-                f"/conversations/direct/artisan/{action['artisan_id']}/",
-                {"initial_message": str(action.get("initial_message") or "")[:5000]},
-                idempotency_key=action.get("idempotency_key")
-                or new_idempotency_key("direct-chat"),
-            )
-        else:
-            payload = {"artisan_id": str(action["artisan_id"])}
-            service_id = str(action.get("service_id") or "").strip()
-            if service_id.isdigit():
-                payload["service_id"] = service_id
-            _, conversation, _ = client.post(
-                "/conversations/start/",
-                payload,
-                idempotency_key=action.get("idempotency_key")
-                or new_idempotency_key("conversation-start"),
-            )
+        payload = {"artisan_id": str(action["artisan_id"])}
+        service_id = str(action.get("service_id") or "").strip()
+        if service_id.isdigit():
+            payload["service_id"] = service_id
+        _, conversation, _ = client.post(
+            "/conversations/start/",
+            payload,
+            idempotency_key=action.get("idempotency_key")
+            or new_idempotency_key("conversation-start"),
+        )
     except APIError as exc:
         _clear_pending_action(request)
         handle_api_error(request, exc)
@@ -3063,40 +3045,6 @@ def start_category_conversation(request, category_id):
 
 
 @api_guard
-def start_direct_conversation(request, pk):
-    if request.method != "POST":
-        return redirect("artisan-detail", pk=pk)
-    detail_target = _artisan_detail_return_target(request, pk)
-    role = current_role(request)
-    initial_message = str(request.POST.get("initial_message", "") or "").strip()[:5000]
-    action = {
-        "kind": "direct_artisan_message",
-        "artisan_id": str(pk),
-        "initial_message": initial_message,
-        "return_to": detail_target,
-    }
-    if role in {"customer", "artisan"}:
-        completion = _ensure_action_profile_complete(
-            request,
-            action,
-            role=role,
-            destination=detail_target,
-        )
-        if completion:
-            return completion
-    try:
-        _, conversation, _ = APIClient(request).post(
-            f"/conversations/direct/artisan/{pk}/",
-            {"initial_message": initial_message},
-            idempotency_key=new_idempotency_key("direct-chat"),
-        )
-        return redirect("conversation-detail", conversation_id=conversation["id"])
-    except APIError as exc:
-        handle_api_error(request, exc)
-        return redirect("artisan-detail", pk=pk)
-
-
-@api_guard
 def conversation_inbox(request):
     try:
         _, payload, _ = APIClient(request).get(
@@ -3210,6 +3158,33 @@ def _conversation_local_datetime(value):
     return parsed.astimezone(lagos).strftime("%Y-%m-%dT%H:%M")
 
 
+def _offer_materials_payload(raw):
+    """Parse the offer form's JSON materials list; unknown shapes fail closed to []."""
+    import json as _json
+
+    if not raw:
+        return []
+    try:
+        parsed = _json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    items = []
+    for entry in parsed[:50]:
+        if not isinstance(entry, dict):
+            continue
+        item = {
+            "name": str(entry.get("name", ""))[:200],
+            "quantity": str(entry.get("quantity", ""))[:32],
+            "unit": str(entry.get("unit", ""))[:40],
+            "unit_price": str(entry.get("unit_price", ""))[:32],
+        }
+        if item["name"]:
+            items.append(item)
+    return items
+
+
 def _offer_datetime_payload(value):
     """Treat datetime-local fallbacks as Lagos time; preserve explicit browser offsets/UTC values."""
     if not value:
@@ -3228,18 +3203,6 @@ def _offer_datetime_payload(value):
 
 
 @require_GET
-def offline_request_assistant(request):
-    # The shell is deliberately generic so the service worker never caches a
-    # user-specific conversation ID or request contents.
-    return page(
-        request,
-        "offline/request_assistant.html",
-        offline_conversation_id="",
-        page_js_path="js/pages/offline-request-assistant.js",
-        include_geography=False,
-    )
-
-
 @require_GET
 def service_worker(request):
     worker_path = settings.BASE_DIR / "static" / "js" / "service-worker.js"
@@ -3400,11 +3363,24 @@ def conversation_detail(request, conversation_id):
                     files=files or None,
                     idempotency_key=key,
                 )
+            elif action == "description_done":
+                client.post(
+                    f"/conversations/{conversation_id}/description-confirm/",
+                    {},
+                    idempotency_key=key,
+                )
+                messages.success(
+                    request,
+                    "Description confirmed. You can now prepare the itemized quote.",
+                )
             elif action == "offer":
                 payload = {
                     "labour_amount": request.POST.get("labour_amount"),
                     "materials_amount": request.POST.get("materials_amount"),
                     "total_amount": request.POST.get("total_amount"),
+                    "materials": _offer_materials_payload(
+                        request.POST.get("materials_json", "")
+                    ),
                     **{
                         k: request.POST.get(k, "0") or "0"
                         for k in ("transport_amount", "additional_amount")
@@ -3428,9 +3404,8 @@ def conversation_detail(request, conversation_id):
                     "scheduled_start": _offer_datetime_payload(
                         request.POST.get("scheduled_start")
                     ),
-                    "scheduled_end": _offer_datetime_payload(
-                        request.POST.get("scheduled_end")
-                    ),
+                    "duration_value": request.POST.get("duration_value", "").strip(),
+                    "duration_unit": request.POST.get("duration_unit", "").strip(),
                     "expires_at": _offer_datetime_payload(
                         request.POST.get("expires_at")
                     ),
@@ -3476,10 +3451,14 @@ def conversation_detail(request, conversation_id):
                         "scope",
                         "notes",
                         "scheduled_start",
-                        "scheduled_end",
+                        "duration_value",
+                        "duration_unit",
                         "expires_at",
                     )
                 }
+                counter_payload["materials"] = _offer_materials_payload(
+                    request.POST.get("materials_json", "")
+                )
                 counter_payload.update(
                     {
                         k: request.POST.get(k, "0") or "0"
@@ -3498,7 +3477,7 @@ def conversation_detail(request, conversation_id):
                         )
                     }
                 )
-                for field in ("scheduled_start", "scheduled_end", "expires_at"):
+                for field in ("scheduled_start", "expires_at"):
                     counter_payload[field] = _offer_datetime_payload(
                         counter_payload[field]
                     )
@@ -3708,7 +3687,7 @@ def conversation_detail(request, conversation_id):
                 and conversation.get("viewer_role") == "customer"
                 and not conversation.get("service_request")
             ),
-            assistant_today=timezone.localdate().isoformat(),
+            today_iso=timezone.localdate().isoformat(),
         )
     except APIError as exc:
         handle_api_error(request, exc)

@@ -4,7 +4,6 @@ from frontend import views
 urlpatterns = [
     path("catalogue/institutions/", views.institution_catalogue, name="institution-catalogue"),
     path("service-worker.js", views.service_worker, name="service-worker"),
-    path("offline/request-assistant/", views.offline_request_assistant, name="offline-request-assistant"),
     path("", views.home, name="home"),
     path("dashboard/", views.home, name="dashboard"),
     path("acknowledge-payment-notice/", views.acknowledge_payment_notice, name="acknowledge-payment-notice"),

@@ -27,8 +27,6 @@
     || document.querySelector('meta[name="csrf-token"]')?.content || '';
   const optionsNode = document.getElementById('request-assistant-options');
   let requestOptions = { categories: [], services: [], locations: [] };
-  let serverAssistantContext = null;
-  let applyingAssistantState = false;
   let dirtyFields = new Set();
   let syncTimer = 0;
   let syncing = false;
@@ -43,8 +41,7 @@
   try {
     const parsed = JSON.parse(optionsNode?.textContent || '{}');
     if (parsed && typeof parsed === 'object') {
-      serverAssistantContext = parsed;
-      const catalogue = parsed.request_options || parsed;
+      const catalogue = parsed;
       requestOptions = {
         categories: Array.isArray(catalogue.categories) ? catalogue.categories : [],
         services: Array.isArray(catalogue.services) ? catalogue.services : [],
@@ -144,9 +141,8 @@
 
   function serverValues() {
     try {
-      const context = JSON.parse(optionsNode?.textContent || '{}');
-      const stateValues = context && context.request_state && context.request_state.values;
-      if (stateValues && typeof stateValues === 'object') return stateValues;
+      const draft = JSON.parse(document.getElementById('request-draft-data')?.textContent || '{}');
+      if (draft && typeof draft === 'object') return draft;
     } catch (_error) {
       // Initial server-rendered inputs remain the fallback.
     }
@@ -202,61 +198,6 @@
     }
     return String(left ?? '') === String(right ?? '');
   }
-
-  function applyAssistantServerState(event) {
-    if (requestSubmitted) return;
-    const next = event.detail?.assistant;
-    const serverValues = next?.request_state?.values;
-    if (!serverValues || typeof serverValues !== 'object') return;
-    const previous = event.detail?.previousValues || serverAssistantContext?.request_state?.values || {};
-    const current = readValues();
-    const updatedFields = fieldNames.filter((name) => (
-      Object.prototype.hasOwnProperty.call(serverValues, name)
-      && !valuesEqual(name, serverValues[name], previous[name])
-    ));
-    const nextDirtyFields = new Set(dirtyFields);
-    updatedFields.forEach((name) => {
-      if (nextDirtyFields.has(name) && valuesEqual(name, current[name], serverValues[name])) {
-        nextDirtyFields.delete(name);
-      }
-    });
-    const merged = { ...serverValues };
-    nextDirtyFields.forEach((name) => {
-      if (Object.prototype.hasOwnProperty.call(current, name)) merged[name] = current[name];
-    });
-
-    applyingAssistantState = true;
-    try {
-      applyValues(merged);
-    } finally {
-      applyingAssistantState = false;
-    }
-    dirtyFields = nextDirtyFields;
-    serverAssistantContext = next;
-
-    if (updatedFields.length) {
-      serverDraftExists = true;
-      form.dataset.serverDraft = 'true';
-      clearReviewedState();
-      const hasPendingEdits = dirtyFields.size > 0;
-      const saved = saveLocalDraft({ pending: hasPendingEdits });
-      if (saved && !hasPendingEdits) {
-        try {
-          const local = JSON.parse(localStorage.getItem(draftKey) || '{}');
-          local.server_saved_at = new Date().toISOString();
-          localStorage.setItem(draftKey, JSON.stringify(local));
-        } catch (_error) {
-          // The server response is authoritative; local metadata is best-effort.
-        }
-      }
-      setStatus(hasPendingEdits
-        ? 'Chat details are saved in the conversation. Other unsynced edits remain on this device and will sync separately.'
-        : 'Chat details are saved in the conversation as a draft. The request is not submitted.');
-      setSubmitStatus('Your message updated the draft only. Review and submit it when you are ready.');
-    }
-  }
-
-  window.addEventListener('artisan:assistant-state', applyAssistantServerState);
 
   function clearFieldErrors() {
     form.querySelectorAll('[data-request-field-error]').forEach((node) => {
@@ -583,7 +524,6 @@
   });
 
   form.addEventListener('input', (event) => {
-    if (applyingAssistantState) return;
     const field = event.target;
     if (!field || !field.name || !fieldNames.includes(field.name)) return;
     dirtyFields.add(field.name);
@@ -594,7 +534,6 @@
   });
 
   form.addEventListener('change', (event) => {
-    if (applyingAssistantState) return;
     const field = event.target;
     if (!field || !field.name || !fieldNames.includes(field.name)) return;
     dirtyFields.add(field.name);

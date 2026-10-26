@@ -25,7 +25,7 @@
   }
   try{syncGuidance(JSON.parse(document.getElementById("booking-guidance-data")?.textContent||"null"));}catch(e){}
   guidanceNode?.querySelector("[data-guide-action]")?.addEventListener("click",()=>{
-    const selectors={EDIT_REQUEST:"#request-assistant-card, .request-card",SEND_OFFER:'.offer-create-card, form:has(input[name="action"][value="offer"])',REVISE_OFFER:'form:has(input[name="action"][value="offer"]), .offer-card',REVIEW_OFFER:'.offer-card, form:has(input[name="action"][value="accept"])',PAY:'form:has(input[name="action"][value="pay"])',START_BOOKING:'form:has(input[name="action"][value="start_booking"])',SUBMIT_COMPLETION:'form:has(input[name="action"][value="complete"])',CONFIRM_COMPLETION:'form:has(input[name="action"][value="confirm_completion"])',BOOKING:'.booking-card, a.workflow-text-link[href*="/bookings/"]',SUPPORT:'.support-case-card, .support-card'};
+    const selectors={CONFIRM_DESCRIPTION:'.description-confirm-card, form:has(input[name="action"][value="description_done"])',EDIT_REQUEST:"#request-assistant-card, .request-card",SEND_OFFER:'.offer-create-card, form:has(input[name="action"][value="offer"])',REVISE_OFFER:'form:has(input[name="action"][value="offer"]), .offer-card',REVIEW_OFFER:'.offer-card, form:has(input[name="action"][value="accept"])',PAY:'form:has(input[name="action"][value="pay"])',START_BOOKING:'form:has(input[name="action"][value="start_booking"])',SUBMIT_COMPLETION:'form:has(input[name="action"][value="complete"])',CONFIRM_COMPLETION:'form:has(input[name="action"][value="confirm_completion"])',BOOKING:'.booking-card, a.workflow-text-link[href*="/bookings/"]',SUPPORT:'.support-case-card, .support-card'};
     const selector=selectors[guide?.action?.code];
     const target=selector?document.querySelector(selector):null;
     if(!target){guidanceNode.querySelector("[data-guide-status]").textContent="The next step has changed or its controls are not on this page. Refresh to load the current controls; use booking details or support if needed.";return;}
@@ -43,20 +43,12 @@
   const preview=document.getElementById("attachment-preview");
   const statusNode=document.getElementById("chat-status");
   const unreadNode=document.getElementById("chat-unread-count");
-  const assistantNode=document.getElementById("conversation-assistant");
-  const suggestionsNode=document.getElementById("chat-suggestions");
-  const assistantOptionsNode=document.getElementById("request-assistant-options");
-  const requestAssistantDetails=document.getElementById("request-assistant-card");
-  const assistantEnabled=stream.dataset.assistantEnabled==="true";
-  const workspace=document.querySelector(".chat-workspace");
   const scrollArea=document.getElementById("conversation-scroll-area")||stream;
   const csrf=form?.querySelector("input[name=csrfmiddlewaretoken]")?.value||document.querySelector('meta[name="csrf-token"]')?.content||"";
   const viewerId=Number(stream.dataset.viewerId||0);
   const role=stream.dataset.role||"";
   let delay=4000,timer=0,lastSignature="",firstPayload=true,readPending=false,sendingMessage=false;
   let selectedFiles=Array.from(fileInput?.files||[]);
-  let assistantContext=null;
-  try{assistantContext=JSON.parse(assistantOptionsNode?.textContent||"null");}catch(_){assistantContext=null;}
   const seenMessageIds=new Set();
   let lastRenderedId=null,lastReadMessageId=null;
 
@@ -73,162 +65,6 @@
     const pad=(number)=>String(number).padStart(2,"0");
     return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
-  const assistantValues=(context=assistantContext)=>context?.request_state?.values&&typeof context.request_state.values==="object"?context.request_state.values:{};
-  const pad2=(value)=>String(value).padStart(2,"0");
-  function formatClock(value){
-    const match=String(value||"").match(/^(\d{1,2}):(\d{2})/);
-    if(!match)return "";
-    const hour=Number(match[1]);
-    const minute=match[2];
-    if(hour>23)return "";
-    return `${hour%12||12}:${minute} ${hour>=12?"pm":"am"}`;
-  }
-  function formatSchedule(dateValue,timeStart,timeEnd,timeNote){
-    const match=String(dateValue||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if(!match)return "";
-    const dateText=`${match[3]}-${match[2]}-${match[1]}`;
-    const start=formatClock(timeStart);
-    const end=formatClock(timeEnd);
-    const times=start&&end?`${start}–${end}`:start||end;
-    const note=String(timeNote||"").trim();
-    return `${dateText}${times?`, ${times}`:""}${note?` · ${note}`:""}`;
-  }
-  function updateScheduleSummary(context=assistantContext){
-    const target=assistantNode?.querySelector("#assistant-schedule-summary");
-    if(!target)return;
-    const values=assistantValues(context);
-    const summary=formatSchedule(values.preferred_date,values.preferred_time_start,values.preferred_time_end,values.preferred_time_note);
-    target.hidden=!summary;
-    target.textContent=summary?`Saved preference: ${summary}. This is not a confirmed appointment.`:"";
-  }
-  function controlLabel(text,control){
-    const label=document.createElement("label");
-    label.className="assistant-control-label";
-    const title=document.createElement("span");
-    title.textContent=text;
-    label.append(title,control);
-    return label;
-  }
-  function addOption(select,value,label){
-    const option=document.createElement("option");
-    option.value=String(value??"");
-    option.textContent=String(label??"");
-    select.appendChild(option);
-    return option;
-  }
-  function updateScheduleControlPreview(){
-    if(!assistantNode)return;
-    const host=assistantNode.querySelector("#assistant-controls");
-    const date=host?.querySelector("[data-assistant-date]");
-    const previewNode=host?.querySelector("[data-assistant-control-preview]");
-    if(!date||!previewNode)return;
-    const time=host.querySelector("[data-assistant-time]")?.value||"";
-    const summary=formatSchedule(date.value,time,"","");
-    previewNode.hidden=!summary;
-    previewNode.textContent=summary?`Selected preference: ${summary}`:"Choose a future date; time is optional.";
-  }
-  function renderAssistantControls(context=assistantContext){
-    const host=assistantNode?.querySelector("#assistant-controls");
-    if(!host)return;
-    host.replaceChildren();
-    const field=String(context?.prompt?.field||"");
-    const values=assistantValues(context);
-    const options=context?.request_options||{};
-    const group=document.createElement("div");
-    group.className="assistant-control-group";
-    let addButtonText="Add to message";
-
-    if(field==="service"){
-      const select=document.createElement("select");
-      select.className="field-input";
-      select.dataset.assistantService="";
-      select.required=true;
-      addOption(select,"","Choose a service from this artisan’s catalogue");
-      const categories=Array.isArray(options.categories)?options.categories:[];
-      categories.forEach(category=>{
-        const services=Array.isArray(category.services)?category.services:[];
-        if(!services.length)return;
-        const optgroup=document.createElement("optgroup");
-        optgroup.label=String(category.name||"Available services");
-        services.forEach(service=>{
-          const option=document.createElement("option");
-          option.value=String(service.id??"");
-          option.textContent=String(service.name||"");
-          option.dataset.serviceName=String(service.name||"");
-          optgroup.appendChild(option);
-        });
-        select.appendChild(optgroup);
-      });
-      if(!select.querySelector("option[data-service-name]"))return;
-      group.appendChild(controlLabel("Service",select));
-      addButtonText="Add service to message";
-    }else if(field==="location"){
-      const select=document.createElement("select");
-      select.className="field-input";
-      select.dataset.assistantLocation="";
-      select.required=true;
-      addOption(select,"","Choose a location from the available catalogue");
-      const selectedService=String(values.service_id||"");
-      const locations=Array.isArray(options.locations)?options.locations:[];
-      const matching=locations.filter(location=>!selectedService||!Array.isArray(location.service_ids)||location.service_ids.map(String).includes(selectedService));
-      matching.forEach(location=>{
-        const label=location.label||`${location.area||""}, ${location.state||""}, ${location.country||""}`;
-        addOption(select,location.id,label);
-      });
-      if(!matching.length)return;
-      group.appendChild(controlLabel("Service location",select));
-      addButtonText="Add location to message";
-    }else if(field==="preferred_date"){
-      const date=document.createElement("input");
-      date.type="date";
-      date.className="field-input";
-      date.dataset.assistantDate="";
-      date.required=true;
-      date.min=document.querySelector('#request-assistant-form [name="preferred_date"]')?.min||stream.dataset.assistantToday||"";
-      date.value=String(values.preferred_date||"");
-      const time=document.createElement("input");
-      time.type="time";
-      time.className="field-input";
-      time.dataset.assistantTime="";
-      time.value=String(values.preferred_time_start||"").slice(0,5);
-      const controls=document.createElement("div");
-      controls.className="assistant-control-grid";
-      controls.append(controlLabel("Preferred date",date),controlLabel("Preferred time · optional",time));
-      group.appendChild(controls);
-      const selected=document.createElement("p");
-      selected.className="assistant-control-preview";
-      selected.dataset.assistantControlPreview="";
-      selected.setAttribute("aria-live","polite");
-      group.appendChild(selected);
-      addButtonText="Add date and time to message";
-    }else if(field==="budget"){
-      const budget=document.createElement("input");
-      budget.type="number";
-      budget.className="field-input";
-      budget.min="0";
-      budget.step="0.01";
-      budget.inputMode="decimal";
-      budget.required=true;
-      budget.dataset.assistantBudget="";
-      budget.value=String(values.budget||"");
-      budget.placeholder="Enter an amount in naira";
-      group.appendChild(controlLabel("Budget · optional",budget));
-      addButtonText="Add budget to message";
-    }else{
-      return;
-    }
-
-    const note=document.createElement("p");
-    note.className="assistant-control-note";
-    note.textContent="This adds a clear reply to the message box; review it and press Send to save it in the conversation.";
-    const button=document.createElement("button");
-    button.type="button";
-    button.className="assistant-control-add";
-    button.dataset.assistantControlAdd=field;
-    button.textContent=addButtonText;
-    host.append(group,note,button);
-    updateScheduleControlPreview();
-  }
   document.querySelectorAll('input[type="datetime-local"][data-utc-value]').forEach(field=>{
     const value=localDateTimeValue(field.dataset.utcValue||"");
     if(value)field.value=value;
@@ -238,70 +74,6 @@
     if(Number.isNaN(date.getTime()))return;
     node.textContent=date.toLocaleString(undefined,{weekday:"short",day:"numeric",month:"short",year:"numeric",hour:"numeric",minute:"2-digit"});
   });
-
-  function addControlReply(button){
-    if(!input)return;
-    const field=button.dataset.assistantControlAdd||"";
-    const host=assistantNode?.querySelector("#assistant-controls");
-    let reply="";
-    if(field==="service"){
-      const select=host?.querySelector("[data-assistant-service]");
-      if(!select?.reportValidity())return;
-      const selected=select.selectedOptions[0];
-      reply=`I need ${selected?.dataset.serviceName||selected?.textContent||"this service"}.`;
-    }else if(field==="location"){
-      const select=host?.querySelector("[data-assistant-location]");
-      if(!select?.reportValidity())return;
-      reply=`The service location is ${select.selectedOptions[0]?.textContent||""}.`;
-    }else if(field==="preferred_date"){
-      const date=host?.querySelector("[data-assistant-date]");
-      const time=host?.querySelector("[data-assistant-time]");
-      if(!date?.reportValidity())return;
-      if(time&&!time.checkValidity()){time.reportValidity();return;}
-      const summary=formatSchedule(date.value,time?.value||"","","");
-      if(!summary){setStatus("Choose a valid preferred date before adding it to your message.");return;}
-      reply=`I prefer ${summary.replace(", "," at ")} for the service.`;
-    }else if(field==="budget"){
-      const amount=host?.querySelector("[data-assistant-budget]");
-      if(!amount?.reportValidity())return;
-      const number=Number(amount.value);
-      if(!Number.isFinite(number)||number<0){setStatus("Enter a valid non-negative budget amount.");amount?.focus();return;}
-      let formatted=String(amount.value);
-      try{formatted=new Intl.NumberFormat("en-NG",{maximumFractionDigits:2}).format(number);}catch(_){formatted=String(amount.value);}
-      reply=`My budget is ₦${formatted}.`;
-    }
-    if(!reply)return;
-    const current=input.value.trim();
-    const next=current?`${current}\n${reply}`:reply;
-    if(input.maxLength>0&&next.length>input.maxLength){setStatus("The added detail would exceed the message length limit. Shorten your message and try again.");input.focus();return;}
-    input.value=next;
-    input.focus();
-    input.setSelectionRange(input.value.length,input.value.length);
-    setStatus("Added to your message. Review the wording, then press Send to update the request draft.");
-  }
-
-  workspace?.addEventListener("click",event=>{
-    const target=event.target;
-    const controlButton=target.closest?.("[data-assistant-control-add]");
-    if(controlButton){addControlReply(controlButton);return;}
-    const button=target.closest?.("[data-suggestion]");
-    if(!button||!input)return;
-    const suggestion=button.dataset.suggestion||button.textContent||"";
-    if(/review.*request|request.*review/i.test(suggestion)&&requestAssistantDetails){
-      requestAssistantDetails.open=true;
-      requestAssistantDetails.scrollIntoView({behavior:"smooth",block:"center"});
-      setStatus("Your draft is still unsent. Review or edit each detail, then submit only when ready.");
-      return;
-    }
-    input.value=suggestion;
-    input.focus();
-  });
-  workspace?.addEventListener("input",updateScheduleControlPreview);
-  workspace?.addEventListener("change",updateScheduleControlPreview);
-  if(assistantEnabled&&assistantContext){
-    renderAssistantControls(assistantContext);
-    updateScheduleSummary(assistantContext);
-  }
 
   function makeAttachment(attachment){
     const url=safeUrl(attachment.url);
@@ -394,100 +166,9 @@
       empty.textContent="No messages yet. Start the conversation naturally — you can write a note or attach a photo.";
       fragment.appendChild(empty);
     }
-    const assistantBubble=stream.querySelector("#conversation-assistant.request-assistant-message");
-    if(assistantBubble)fragment.appendChild(assistantBubble);
     stream.replaceChildren(fragment);
     if(firstPayload||keepBottom)scrollArea.scrollTop=scrollArea.scrollHeight;
     firstPayload=false;
-  }
-
-  function readAssistantContext(parsedDocument){
-    const node=parsedDocument?.getElementById("request-assistant-options");
-    if(!node)return null;
-    try{
-      const parsed=JSON.parse(node.textContent||"null");
-      return parsed&&typeof parsed==="object"?parsed:null;
-    }catch(_){return null;}
-  }
-
-  function updateAssistant(parsedDocument){
-    if(!assistantNode)return;
-    const next=parsedDocument.getElementById("conversation-assistant");
-    if(!next)return;
-    const nextContext=readAssistantContext(parsedDocument);
-    if(assistantNode.classList.contains("request-assistant-message")&&nextContext){
-      const previousValues={...assistantValues(assistantContext)};
-      assistantContext=nextContext;
-      assistantNode.dataset.mode=String(nextContext.mode||"");
-      const reply=assistantNode.querySelector("#assistant-reply");
-      if(reply)reply.textContent=String(nextContext.reply||"");
-      const prompt=nextContext.prompt&&typeof nextContext.prompt==="object"?nextContext.prompt:{};
-      let questionWrap=assistantNode.querySelector("#assistant-question-wrap");
-      if(prompt.field&&prompt.text){
-        if(!questionWrap){
-          questionWrap=document.createElement("div");
-          questionWrap.className="assistant-question-wrap";
-          questionWrap.id="assistant-question-wrap";
-          const label=document.createElement("span");
-          const question=document.createElement("p");
-          question.id="assistant-question";
-          questionWrap.append(label,question);
-          assistantNode.querySelector(".assistant-bubble")?.appendChild(questionWrap);
-        }
-        const label=questionWrap.querySelector("span");
-        const question=questionWrap.querySelector("#assistant-question");
-        if(label)label.textContent=prompt.optional?"Optional detail":"Next detail";
-        if(question)question.textContent=String(prompt.text);
-      }else if(questionWrap){
-        questionWrap.remove();
-      }
-      renderAssistantControls(nextContext);
-      updateScheduleSummary(nextContext);
-      window.dispatchEvent(new CustomEvent("artisan:assistant-state",{detail:{assistant:nextContext,previousValues}}));
-      return;
-    }
-    const reply=assistantNode.querySelector("#assistant-reply");
-    const nextReply=next.querySelector("#assistant-reply");
-    if(reply&&nextReply)reply.textContent=nextReply.textContent;
-    assistantNode.dataset.mode=next.dataset.mode||"";
-    const nextQuestion=next.querySelector("#assistant-question");
-    let questionWrap=assistantNode.querySelector("#assistant-question-wrap");
-    if(nextQuestion){
-      if(!questionWrap){
-        questionWrap=document.createElement("div");
-        questionWrap.className="assistant-question-wrap";
-        questionWrap.id="assistant-question-wrap";
-        const label=document.createElement("span");
-        label.textContent="Next detail";
-        const question=document.createElement("p");
-        question.id="assistant-question";
-        questionWrap.append(label,question);
-        assistantNode.querySelector(".assistant-guidance-copy")?.appendChild(questionWrap);
-      }
-      const currentQuestion=questionWrap.querySelector("#assistant-question");
-      const currentLabel=questionWrap.querySelector("span");
-      const nextLabel=next.querySelector("#assistant-question-wrap span");
-      if(currentQuestion)currentQuestion.textContent=nextQuestion.textContent;
-      if(currentLabel&&nextLabel)currentLabel.textContent=nextLabel.textContent;
-    }else if(questionWrap){
-      questionWrap.remove();
-    }
-  }
-
-  function updateSuggestions(parsedDocument){
-    if(!suggestionsNode)return;
-    const source=parsedDocument.getElementById("chat-suggestions");
-    if(!source)return;
-    const fragment=document.createDocumentFragment();
-    source.querySelectorAll("[data-suggestion]").forEach(sourceButton=>{
-      const button=document.createElement("button");
-      button.type="button";
-      button.className="suggestion";
-      button.dataset.suggestion=sourceButton.dataset.suggestion||sourceButton.textContent;
-      button.textContent=sourceButton.textContent;
-      fragment.appendChild(button);
-    });
-    suggestionsNode.replaceChildren(fragment);
   }
 
   function markRead(){
@@ -678,7 +359,7 @@
     sendingMessage=true;
     form.dataset.sending="true";
     controls.forEach(control=>{control.disabled=true;});
-    setStatus(assistantEnabled?"Updating the request draft and sending securely…":"Sending securely…");
+    setStatus("Sending securely…");
     try{
       const response=await fetch(window.location.href,{method:"POST",body:data,credentials:"same-origin",headers:{Accept:"text/html,application/json","X-Requested-With":"XMLHttpRequest","X-CSRFToken":csrf}});
       if(!response.ok){setStatus(formatApiError(await readApiPayload(response),response.status));return;}
@@ -691,14 +372,12 @@
         return;
       }
       if(response.url&&new URL(response.url).pathname!==window.location.pathname){window.location.assign(response.url);return;}
-      updateAssistant(parsed);
-      updateSuggestions(parsed);
       input.value="";
       if(fileInput)fileInput.value="";
       selectedFiles=[];
       clearVoice();
       clearAttachmentPreview();
-      setStatus(assistantEnabled?"Sent securely. The request remains a draft until you review and submit it.":"Sent securely.");
+      setStatus("Sent securely.");
       await refresh();
     }catch(_){setStatus(formatApiError(null,null,{networkError:true}));}
     finally{

@@ -506,7 +506,7 @@ class PromotionApplicationForm(StyledForm):
     )
     promotional_description = forms.CharField(
         label="Promotion description",
-        min_length=10,
+        min_length=40,
         max_length=1200,
         help_text="Describe your work and why this promotion target is relevant. Do not include identity numbers or sensitive information.",
         widget=forms.Textarea(attrs={"rows": 5, "maxlength": 1200}),
