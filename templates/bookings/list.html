@@ -27,11 +27,11 @@
         <a class="workflow-list-card booking-list-card" href="{% if item.viewer_role == 'customer' and item.conversation_id %}{% url 'conversation-detail' conversation_id=item.conversation_id %}{% else %}{% url 'booking-detail' pk=item.id %}{% endif %}" data-artisan-reveal data-motion="up">
           <span class="workflow-list-index" aria-hidden="true">{{ forloop.counter|stringformat:'02d' }}</span>
           <span class="workflow-list-main">
-            <span class="workflow-status-line"><span class="status-pill {{ item.status|status_class }}"><span class="workflow-status-dot" aria-hidden="true"></span>{{ item.status|default:'Status unavailable'|title }}</span><span class="workflow-list-reference">{% if item.viewer_role == 'customer' %}Customer-side transaction{% else %}Your service{% endif %} · Request #{{ item.request_id|default:'—' }}</span></span>
-            <strong>Booking {{ item.id|slice:':8' }}</strong>
-            <span class="workflow-list-meta">{{ item.scheduled_time_start }} <span aria-hidden="true">→</span> {{ item.scheduled_time_end }}</span>
+            <span class="workflow-status-line"><span class="status-pill {{ item.status|status_class }}"><span class="workflow-status-dot" aria-hidden="true"></span>{{ item.status|default:'Status unavailable'|title }}</span><span class="workflow-list-reference">{% if item.service_name %}{{ item.service_name }}{% elif item.viewer_role == 'customer' %}Customer-side transaction{% else %}Your service{% endif %}</span></span>
+            <strong>{% if item.viewer_role == 'customer' %}Booking with {{ item.artisan_name|default:'your artisan' }}{% else %}Booking for {{ item.customer_name|default:'your customer' }}{% endif %}</strong>
+            <span class="workflow-list-meta">{{ item.scheduled_time_start|human_datetime }} <span aria-hidden="true">→</span> {{ item.scheduled_time_end|human_datetime }}</span>
           </span>
-          <span class="workflow-list-price">₦{{ item.price_agreed }}<small>agreed price</small></span>
+          <span class="workflow-list-price">{{ item.price_agreed|ngn }}<small>agreed price</small></span>
           <span class="workflow-list-arrow" aria-hidden="true">↗</span>
         </a>
       {% empty %}

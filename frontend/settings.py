@@ -15,6 +15,17 @@ SECRET_KEY = config("SECRET_KEY", default="dev-only-change-me-before-deployment"
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="http://localhost,http://127.0.0.1", cast=Csv())
 
+# Ngrok tunnels: the public hostname changes every time the tunnel restarts, so
+# development accepts any ngrok subdomain instead of forcing an .env edit (and a
+# CSRF failure on every form post) after each restart. Production stays explicit.
+NGROK_HOSTS = (".ngrok-free.app", ".ngrok-free.dev", ".ngrok.app", ".ngrok.dev", ".ngrok.io")
+NGROK_ORIGINS = tuple("https://*" + suffix for suffix in NGROK_HOSTS)
+if ENVIRONMENT != "production":
+    ALLOWED_HOSTS = list(ALLOWED_HOSTS) + [h for h in NGROK_HOSTS if h not in ALLOWED_HOSTS]
+    CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + [
+        o for o in NGROK_ORIGINS if o not in CSRF_TRUSTED_ORIGINS
+    ]
+
 INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -40,22 +51,38 @@ ROOT_URLCONF = "frontend.urls"
 WSGI_APPLICATION = "frontend.wsgi.application"
 ASGI_APPLICATION = "frontend.asgi.application"
 
+# Production loads each template once. Without the cached loader a debug server
+# re-reads and re-compiles every {% include %} in every row, which makes console
+# pages several times slower than they are in production. Django forbids the
+# app-directories shortcut alongside explicit loaders, so the loader list spells
+# both loaders out. Set TEMPLATE_UNCACHED=1 while editing templates if needed.
+_TEMPLATE_CACHE = not config("TEMPLATE_UNCACHED", default=False, cast=bool)
+_TEMPLATE_OPTIONS = {
+    "context_processors": [
+        "django.template.context_processors.request",
+        "django.contrib.auth.context_processors.auth",
+        "django.contrib.messages.context_processors.messages",
+        "frontend.context_processors.notifications",
+        "frontend.context_processors.unread_messages",
+    ],
+}
+if _TEMPLATE_CACHE:
+    _TEMPLATE_OPTIONS["loaders"] = [(
+        "django.template.loaders.cached.Loader",
+        [
+            "django.template.loaders.filesystem.Loader",
+            "django.template.loaders.app_directories.Loader",
+        ],
+    )]
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         "DIRS": [BASE_DIR / "templates"],
-        "APP_DIRS": True,
-        "OPTIONS": {
-            "context_processors": [
-                "django.template.context_processors.request",
-                "django.contrib.auth.context_processors.auth",
-                "django.contrib.messages.context_processors.messages",
-                "frontend.context_processors.notifications",
-            ],
-        },
+        "APP_DIRS": not _TEMPLATE_CACHE,
+        "OPTIONS": _TEMPLATE_OPTIONS,
     },
 ]
-
 # Only local UI state lives here. User accounts remain on the API.
 SESSION_DB_PATH = Path(config("frontend_SESSION_DB", default="frontend_sessions.sqlite3"))
 if not SESSION_DB_PATH.is_absolute():
@@ -66,6 +93,11 @@ DATABASES = {
         "NAME": str(SESSION_DB_PATH),
     }
 }
+
+# Conversation media (audio/video descriptions) is validated at 30 MB by the API.
+# Django only counts non-file POST fields here; large files spool to disk.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 32 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Africa/Lagos"

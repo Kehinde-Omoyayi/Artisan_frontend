@@ -21,12 +21,12 @@
   function rowTemplate(index) {
     var tr = document.createElement('tr');
     tr.innerHTML =
-      '<td><input class="field-input" type="text" data-material-name maxlength="120" placeholder="Item name" required></td>' +
-      '<td><input class="field-input" type="number" data-material-qty min="0.01" step="0.01" value="1" required></td>' +
-      '<td><input class="field-input" type="text" data-material-unit maxlength="40" placeholder="e.g. bags"></td>' +
-      '<td><input class="field-input" type="number" data-material-price min="0" step="0.01" value="0" required></td>' +
-      '<td>₦<span data-material-line>0.00</span></td>' +
-      '<td><button class="button button-secondary" type="button" data-material-remove aria-label="Remove material item">×</button></td>';
+      '<td data-label="Item"><input class="field-input" type="text" data-material-name maxlength="120" placeholder="Item name" required></td>' +
+      '<td data-label="Qty"><input class="field-input" type="number" data-material-qty min="0.01" step="0.01" value="1" required></td>' +
+      '<td data-label="Unit"><input class="field-input" type="text" data-material-unit maxlength="40" placeholder="e.g. bags"></td>' +
+      '<td data-label="Unit price (₦)"><input class="field-input" type="number" data-material-price min="0" step="0.01" value="0" required></td>' +
+      '<td data-label="Line total (₦)"><span class="material-line-value">₦<span data-material-line>0.00</span></span></td>' +
+      '<td data-label="Remove"><button class="button button-secondary" type="button" data-material-remove aria-label="Remove material item">×</button></td>';
     return tr;
   }
 
@@ -46,6 +46,7 @@
     var summary = form.querySelector('[data-offer-summary]') || {};
     var totalInput = form.querySelector('[data-money-total]');
     var submitButton = form.querySelector('[data-offer-submit]');
+    var includedInput = form.querySelector('[data-materials-included]');
     var reviewStatus = form.querySelector('[data-offer-review-status]');
 
     function rows() {
@@ -77,10 +78,13 @@
       var labour = money(labourInput && labourInput.value);
       var transport = money(transportInput && transportInput.value);
       var additional = money(additionalInput && additionalInput.value);
-      var total = labour + subtotal + transport + additional;
+      // When the materials are included in the price the itemised subtotal is
+      // disclosure only: it is never charged a second time.
+      var included = !!(includedInput && includedInput.checked);
+      var total = labour + transport + additional + (included ? 0 : subtotal);
       if (totalInput) { totalInput.value = total.toFixed(2); totalInput.dataset.manual = 'false'; }
       text(summary.querySelector ? summary.querySelector('[data-summary-labour]') : null, '₦' + fmt(labour));
-      text(summary.querySelector ? summary.querySelector('[data-summary-materials]') : null, '₦' + fmt(subtotal));
+      text(summary.querySelector ? summary.querySelector('[data-summary-materials]') : null, '₦' + fmt(subtotal) + (included ? ' (included)' : ''));
       text(summary.querySelector ? summary.querySelector('[data-summary-transport]') : null, '₦' + fmt(transport));
       text(summary.querySelector ? summary.querySelector('[data-summary-additional]') : null, '₦' + fmt(additional));
       text(summary.querySelector ? summary.querySelector('[data-summary-total]') : null, '₦' + fmt(total));
@@ -114,6 +118,7 @@
     }
 
     if (addButton) addButton.addEventListener('click', function () { addRow(null); sync(); });
+    if (includedInput) includedInput.addEventListener('change', sync);
 
     // Prefill rows from a server-prefilled materials source (counter offers).
     var sourceId = panel.getAttribute('data-materials-source');

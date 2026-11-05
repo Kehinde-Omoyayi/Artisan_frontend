@@ -11,5 +11,6 @@ urlpatterns = [
     path('<uuid:pk>/complete/', views.booking_complete, name='booking-complete'),
     path('<uuid:pk>/confirm-completion/', views.booking_confirm_completion, name='booking-confirm'),
     path('<uuid:pk>/dispute/', views.booking_dispute, name='booking-dispute'),
+    path('<uuid:pk>/activity/', views.booking_activity, name='booking-activity'),
     path('<uuid:pk>/history/', views.booking_history, name='booking-history'),
 ]

@@ -28,6 +28,28 @@ def pretty(value):
     return value
 
 @register.filter
+def chat_time(value):
+    """Wall-clock time only, e.g. "12:34 pm" — the chat never prints a date."""
+    if not value:
+        return ''
+    from zoneinfo import ZoneInfo
+
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        except (TypeError, ValueError):
+            return str(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo('Africa/Lagos'))
+    local = parsed.astimezone(ZoneInfo('Africa/Lagos'))
+    hour = local.hour % 12 or 12
+    suffix = 'am' if local.hour < 12 else 'pm'
+    return f'{hour}:{local.minute:02d} {suffix}'
+
+
+@register.filter
 def ngn(value):
     """Format a numeric API amount as Nigerian naira with grouped thousands."""
     try:
@@ -86,6 +108,26 @@ def humanize_code(value):
 
 
 @register.filter
+def delta_label(change):
+    """Say "< 0.1%" rather than "0.0%" when a real change rounds away.
+
+    A movement of ₦500 on ₦7m is a real movement; printing "0.0% vs previous
+    period" makes it look as though nothing happened.
+    """
+    if change is None:
+        return ''
+    try:
+        value = float(change)
+    except (TypeError, ValueError):
+        return ''
+    if value == 0:
+        return '0%'
+    if abs(value) < 0.1:
+        return '<0.1%'
+    return f'{value:.1f}%'
+
+
+@register.filter
 def status_class(value):
     text = str(value or '').upper()
     if any(x in text for x in ('COMPLETED','SUCCEEDED','ACTIVE','VERIFIED','NORMAL','OPEN')):
@@ -131,13 +173,31 @@ def page_script(path):
     """
     if not path:
         return ""
-    try:
-        url = asset(path)
-    except ValueError:
+    # asset() always returns a URL (it falls back to the plain static path), so
+    # existence has to be checked here. Otherwise every page without a dedicated
+    # script requests a 404 - invisible in the HTML, noisy in the network tab.
+    import os
+
+    from django.conf import settings
+
+    found = any(
+        os.path.exists(os.path.join(str(directory), path))
+        for directory in (getattr(settings, "STATICFILES_DIRS", ()) or ())
+    )
+    if not found:
+        # In production the files live behind a manifest storage backend, where
+        # existence can only be answered by Django's finders.
+        hashed = getattr(settings, "STORAGES", {}).get("staticfiles", {}).get("BACKEND", "")
+        if "Manifest" in str(hashed):
+            try:
+                from django.contrib.staticfiles import finders
+
+                found = finders.find(path) is not None
+            except Exception:
+                found = False
+    if not found:
         return ""
-    if not url:
-        return ""
-    return format_html('<script src="{}"></script>', url)
+    return format_html('<script src="{}"></script>', asset(path))
 
 @register.simple_tag
 def discovery_url(params, *drop):
@@ -187,3 +247,43 @@ def human_date(value):
     except ValueError:
         return text
     return f"{parsed.day} {parsed.strftime('%b %Y')}"
+
+
+@register.filter
+def human_datetime(value):
+    """Render an ISO datetime as "5 Nov 2026, 9:00 am" in Africa/Lagos.
+
+    Booking schedules come from the API as UTC ISO strings; printing them raw is
+    both unreadable and ambiguous, so every schedule surface uses this filter.
+    """
+    if not value:
+        return ''
+    from zoneinfo import ZoneInfo
+
+    parsed = value
+    if not isinstance(parsed, datetime):
+        text = str(value).strip().replace('Z', '+00:00')
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return str(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo('UTC'))
+    local = parsed.astimezone(ZoneInfo('Africa/Lagos'))
+    hour = local.strftime('%I').lstrip('0') or '12'
+    return f"{local.day} {local.strftime('%b %Y')}, {hour}:{local.strftime('%M')} {local.strftime('%p').lower()}"
+
+
+@register.filter
+def short_system_message(value):
+    """Chat shows only the short event line, never the long workflow instructions.
+
+    System events stored by the backend append a "Next steps: ..." guidance tail.
+    That guidance lives in the Service tools panel now, so the message stream
+    keeps just the first line (e.g. "Offer accepted."). User text is untouched.
+    """
+    text = '' if value is None else str(value)
+    marker = text.find('Next steps:')
+    if marker != -1:
+        text = text[:marker]
+    return text.strip()

@@ -476,3 +476,45 @@ body:has(.support-operation-shortcut) { padding-bottom:76px; }
 .manager-dashboard .manager-empty-note { border-color:#e5dacf; color:#75665a; }
 .manager-dashboard .manager-footnote-icon { background:#f3ebe2; color:#74432f; }
 .manager-dashboard .manager-footnote-stamp { color:#75665a; }
+
+/* ---- Action buttons on light surfaces -------------------------------------
+   brand-overrides.css loads after this file and paints
+   `.manager-dashboard .manager-action--outline` white (#fffaf4) because that
+   variant is used on the dark panels. The snapshot form, the privacy bar, the
+   promotions header and the load-state card are all light, so that rule left
+   the label white on cream: "Reveal values" rendered as an empty white box.
+   One extra class per selector wins the cascade whatever the load order is. */
+.manager-dashboard .manager-privacy-controls .manager-action,
+.manager-dashboard .manager-snapshot-form .manager-action,
+.manager-dashboard .manager-promotion-actions .manager-action,
+.manager-dashboard .manager-load-state .manager-action {
+  border: 1px solid #d7c3b1; background: #fffaf4; color: #4c3025;
+}
+.manager-dashboard .manager-privacy-controls .manager-action:hover,
+.manager-dashboard .manager-snapshot-form .manager-action:hover,
+.manager-dashboard .manager-promotion-actions .manager-action:hover,
+.manager-dashboard .manager-load-state .manager-action:hover {
+  border-color: #a9856a; background: #f2e6d7; color: #3e2b22;
+  box-shadow: 0 8px 18px rgba(54, 39, 29, .14);
+}
+.manager-dashboard .manager-privacy-controls .manager-action:focus-visible,
+.manager-dashboard .manager-snapshot-form .manager-action:focus-visible,
+.manager-dashboard .manager-promotion-actions .manager-action:focus-visible,
+.manager-dashboard .manager-load-state .manager-action:focus-visible {
+  outline: 2px solid #74432f; outline-offset: 2px;
+}
+/* The one primary action on the page: load the analytics. */
+.manager-dashboard .manager-load-state .manager-action--solid {
+  border-color: #4c3025; background: #4c3025; color: #fffaf4;
+}
+.manager-dashboard .manager-load-state .manager-action--solid:hover {
+  border-color: #38231b; background: #38231b; color: #fffaf4;
+}
+
+/* The load-state card now carries the primary action, so it needs its own slot
+   in the flex row instead of stretching like the copy column. */
+.manager-dashboard .manager-load-action { margin: 0; flex: 0 0 auto; }
+.manager-dashboard .manager-load-action .manager-action { min-height: 40px; padding: 10px 18px; }
+@media (max-width: 720px) {
+  .manager-dashboard .manager-load-action { flex: 0 0 auto; margin-left: 41px; }
+}

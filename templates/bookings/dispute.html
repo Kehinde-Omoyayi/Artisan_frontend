@@ -1,18 +1,18 @@
 {% extends 'base.html' %}
-{% load static %}
+{% load static site_tags %}
 {% block title %}Message customer support · Booking dispute{% endblock %}
 {% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">{% endblock %}
 {% block content %}
 <section class="artisan-motion-page workflow-page booking-workflow-page booking-dispute-page" data-artisan-page="booking-dispute">
   <header class="page-heading artisan-page-heading workflow-heading" data-artisan-reveal data-motion="left">
     <div class="workflow-heading-copy"><span class="workflow-kicker"><span class="workflow-kicker-mark" aria-hidden="true">✦</span> Customer support</span><h1 data-text-motion>Tell support what happened.</h1><p>Your message is sent to customer support and attached to the dispute case for this booking.</p></div>
-    <div class="workflow-detail-heading-side"><span class="workflow-detail-reference">Booking <strong>{{ booking.id|slice:':8' }}</strong></span><a class="workflow-back-link" href="{% url 'booking-detail' pk=booking.id %}"><span aria-hidden="true">←</span> Back to booking</a></div>
+    <div class="workflow-detail-heading-side"><span class="workflow-detail-reference">Service <strong>{{ booking.service_name|default:'Artisan work' }}</strong></span><a class="workflow-back-link" href="{% url 'booking-detail' pk=booking.id %}"><span aria-hidden="true">←</span> Back to booking</a></div>
   </header>
 
   <section class="panel workflow-panel booking-dispute-panel" aria-labelledby="dispute-message-title" data-artisan-reveal data-motion="up">
     <div class="workflow-panel-head"><div><span class="artisan-panel-kicker">Dispute report</span><h2 id="dispute-message-title">Send a message to customer support</h2></div><span class="workflow-panel-icon booking-dispute-icon" aria-hidden="true">✉</span></div>
     <p class="workflow-panel-intro">Describe the issue clearly. Submitting creates or resumes the booking dispute and posts your message in the public support thread so the team can respond.</p>
-    <dl class="booking-dispute-facts"><div><dt>Booking</dt><dd>{{ booking.id }}</dd></div><div><dt>Status</dt><dd>{{ booking.status|default:'Status unavailable'|title }}</dd></div><div><dt>Agreed price</dt><dd>{% if booking.price_agreed %}₦{{ booking.price_agreed }}{% else %}Not available{% endif %}</dd></div></dl>
+    <dl class="booking-dispute-facts"><div><dt>Artisan</dt><dd>{{ booking.artisan_name|default:'Not recorded' }}</dd></div><div><dt>Customer</dt><dd>{{ booking.customer_name|default:'Not recorded' }}</dd></div><div><dt>Status</dt><dd>{{ booking.status|default:'Status unavailable'|title }}</dd></div><div><dt>Agreed price</dt><dd>{% if booking.price_agreed %}{{ booking.price_agreed|ngn }}{% else %}Not available{% endif %}</dd></div></dl>
     <form method="post" class="workflow-form js-submit-form booking-dispute-form" data-artisan-form>
       <input type="hidden" name="dispute_idempotency_key" value="{{ dispute_idempotency_key }}">
       <input type="hidden" name="support_message_key" value="{{ support_message_key }}">

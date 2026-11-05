@@ -4,38 +4,6 @@
   const readApiPayload=(response)=>apiErrors?apiErrors.readResponse(response):response.json().catch(()=>null);
   const stream=document.getElementById("conversation-stream");
   if(!stream)return;
-  // Read-only guidance: changing a card never clicks/submits a transactional control.
-  const guidanceNode=document.getElementById("booking-guidance");
-  let guide=null,guideSignature="";
-  function syncGuidance(next){
-    if(!guidanceNode)return;
-    const signature=JSON.stringify(next||null);
-    if(signature===guideSignature)return;
-    guideSignature=signature;guide=next;
-    guidanceNode.hidden=!next;
-    if(!next)return;
-    for(const key of ["role","title","message"]){
-      guidanceNode.querySelector(`[data-guide-${key}]`).textContent=next[key]||"";
-    }
-    const list=guidanceNode.querySelector("[data-guide-steps]");
-    list.replaceChildren(...(next.steps||[]).map(text=>{const li=document.createElement("li");li.textContent=text;return li;}));
-    const button=guidanceNode.querySelector("[data-guide-action]");
-    button.hidden=!next.action;button.textContent=next.action?.label||"";
-    guidanceNode.querySelector("[data-guide-status]").textContent="";
-  }
-  try{syncGuidance(JSON.parse(document.getElementById("booking-guidance-data")?.textContent||"null"));}catch(e){}
-  guidanceNode?.querySelector("[data-guide-action]")?.addEventListener("click",()=>{
-    const selectors={CONFIRM_DESCRIPTION:'.description-confirm-card, form:has(input[name="action"][value="description_done"])',EDIT_REQUEST:"#request-assistant-card, .request-card",SEND_OFFER:'.offer-create-card, form:has(input[name="action"][value="offer"])',REVISE_OFFER:'form:has(input[name="action"][value="offer"]), .offer-card',REVIEW_OFFER:'.offer-card, form:has(input[name="action"][value="accept"])',PAY:'form:has(input[name="action"][value="pay"])',START_BOOKING:'form:has(input[name="action"][value="start_booking"])',SUBMIT_COMPLETION:'form:has(input[name="action"][value="complete"])',CONFIRM_COMPLETION:'form:has(input[name="action"][value="confirm_completion"])',BOOKING:'.booking-card, a.workflow-text-link[href*="/bookings/"]',SUPPORT:'.support-case-card, .support-card'};
-    const selector=selectors[guide?.action?.code];
-    const target=selector?document.querySelector(selector):null;
-    if(!target){guidanceNode.querySelector("[data-guide-status]").textContent="The next step has changed or its controls are not on this page. Refresh to load the current controls; use booking details or support if needed.";return;}
-    let parent=target;
-    while(parent){if(parent.tagName==="DETAILS")parent.open=true;parent=parent.parentElement;}
-    const focus=target.matches("a,button,input,textarea,select")?target:target.querySelector('textarea:not([disabled]),input:not([type="hidden"]):not([disabled]),button:not([disabled]),summary,a');
-    target.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"center"});
-    if(focus)focus.focus({preventScroll:true});
-    guidanceNode.querySelector("[data-guide-status]").textContent="Review the existing controls below. Nothing has been submitted.";
-  });
   const id=stream.dataset.conversationId;
   const form=document.getElementById("conversation-message-form");
   const input=form?.querySelector("textarea[name=body]");
@@ -46,11 +14,14 @@
   const scrollArea=document.getElementById("conversation-scroll-area")||stream;
   const csrf=form?.querySelector("input[name=csrfmiddlewaretoken]")?.value||document.querySelector('meta[name="csrf-token"]')?.content||"";
   const viewerId=Number(stream.dataset.viewerId||0);
-  const role=stream.dataset.role||"";
   let delay=4000,timer=0,lastSignature="",firstPayload=true,readPending=false,sendingMessage=false;
   let selectedFiles=Array.from(fileInput?.files||[]);
   const seenMessageIds=new Set();
-  let lastRenderedId=null,lastReadMessageId=null;
+  const MEDIA_LIMIT_MB=30;
+  const MEDIA_LIMIT_BYTES=MEDIA_LIMIT_MB*1024*1024;
+  const VOICE_MAX_SECONDS=300;
+  const MB=(bytes)=>`${Math.ceil(bytes/1024/1024)} MB`;
+  let lastRenderedId=null,lastReadMessageId=null,lastOfferSignature=null;
 
   const setStatus=(text)=>{if(statusNode)statusNode.textContent=text;};
   const safeUrl=(value)=>{
@@ -144,8 +115,9 @@
       who.textContent=message.message_type==="SYSTEM"?"Artisan Market":isMine?"You":(message.sender_name||"Participant");
       bubble.appendChild(who);
       if(message.body){
+        const raw=String(message.body);
         const body=document.createElement("p");
-        body.textContent=message.body;
+        body.textContent=message.message_type==="SYSTEM"?raw.split("Next steps:")[0].trim():raw;
         bubble.appendChild(body);
       }
       (message.attachments||[]).forEach(attachment=>{
@@ -154,8 +126,11 @@
       });
       const time=document.createElement("time");
       time.dateTime=String(message.created_at||"");
+      // Chat bubbles show the clock only, never a date: "12:34 pm".
       const parsedDate=new Date(message.created_at);
-      time.textContent=Number.isNaN(parsedDate.getTime())?String(message.created_at||""):parsedDate.toLocaleString();
+      time.textContent=Number.isNaN(parsedDate.getTime())
+        ? String(message.created_at||"")
+        : parsedDate.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"}).toLowerCase().replace(/\s+/g," ");
       bubble.appendChild(time);
       article.appendChild(bubble);
       fragment.appendChild(article);
@@ -193,6 +168,33 @@
 
   scrollArea.addEventListener("scroll",()=>markRead(),{passive:true});
 
+  /* The itemized offer is rendered by the server, so the card that greets the
+     page and the card that a live quote produces are the same markup. When an
+     offer event lands we re-read this page and swap only that node: the room
+     stays where it is, a half-typed message survives, and there is no second
+     copy of the card to drift out of step. */
+  async function syncOfferCard(){
+    try{
+      const response=await fetch(window.location.pathname,{headers:{Accept:"text/html"},credentials:"same-origin",cache:"no-store"});
+      if(!response.ok)return;
+      const page=new DOMParser().parseFromString(await response.text(),"text/html");
+      const fresh=page.getElementById("offer-card");
+      const current=document.getElementById("offer-card");
+      if(!fresh){current?.remove();return;}
+      // Same offer, same version, same status: nothing to redraw.
+      if(current&&fresh.dataset.offerEvent&&current.dataset.offerEvent===fresh.dataset.offerEvent)return;
+      const node=document.importNode(fresh,true);
+      if(current){current.replaceWith(node);}
+      else{
+        stream.querySelector(".chat-empty-state")?.remove();
+        stream.after(node);
+      }
+      node.classList.add("is-refreshed");
+      window.setTimeout(()=>node.classList.remove("is-refreshed"),4000);
+      if(scrollArea.scrollHeight-scrollArea.scrollTop-scrollArea.clientHeight<160)scrollArea.scrollTop=scrollArea.scrollHeight;
+    }catch(_){/* the next poll tries again */}
+  }
+
   async function refresh(){
     try{
       const response=await fetch(`/discover/conversations/${id}/messages/?limit=60`,{headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});
@@ -200,8 +202,19 @@
       const payload=await readApiPayload(response);
       if(!response.ok){setStatus(formatApiError(payload,response.status));return;}
       if(!payload){setStatus(formatApiError(null,response.status));return;}
-      if(Object.prototype.hasOwnProperty.call(payload,"guidance"))syncGuidance(payload.guidance);
-      const messages=Array.isArray(payload.results)?payload.results.slice().reverse():Array.isArray(payload)?payload.slice().reverse():[];
+      let messages=Array.isArray(payload.results)?payload.results.slice().reverse():Array.isArray(payload)?payload.slice().reverse():[];
+      // Any turn of the offer (sent, countered, accepted, declined, expired,
+      // revision asked) means the card is stale: re-sync it in place.
+      const offerSignature=messages
+        .filter(message=>typeof message.event_code==="string"&&(message.event_code.startsWith("OFFER")||message.event_code==="QUOTE_REVISION_REQUESTED"))
+        .map(message=>message.id)
+        .join("|");
+      const offersChanged=lastOfferSignature!==null&&offerSignature!==lastOfferSignature;
+      lastOfferSignature=offerSignature;
+      // "Conversation started" is guidance and "Offer created/countered" is the
+      // card itself. Both stay in the database for audit but never reappear as
+      // a bare text bubble in the stream.
+      messages=messages.filter(message=>message.event_code!=="CONVERSATION_STARTED"&&message.event_code!=="OFFER_CREATED"&&message.event_code!=="OFFER_COUNTERED");
       const wasFirstPayload=firstPayload;
       const newIncoming=!wasFirstPayload&&messages.some(message=>message.id&&!seenMessageIds.has(String(message.id))&&Number(message.sender_id)!==viewerId&&message.message_type!=="SYSTEM");
       messages.forEach(message=>{if(message.id)seenMessageIds.add(String(message.id));});
@@ -209,7 +222,7 @@
       if(signature!==lastSignature){render(messages);lastSignature=signature;}
       lastRenderedId=messages.length?String(messages[messages.length-1].id):null;
       markRead();
-      setStatus(role==="artisan"?"You can keep service updates and direct messages here.":"Messages are sent securely through the marketplace API.");
+      if(offersChanged)syncOfferCard();
     }catch(_){setStatus(formatApiError(null,null,{networkError:true}));}
   }
 
@@ -277,6 +290,7 @@
     selectedFiles=Array.from(fileInput.files||[]);
     if(voiceFile&&!selectedFiles.includes(voiceFile))clearVoice();
     showAttachmentPreview();
+    syncComposerButtons();
   });
   preview?.addEventListener("click",event=>{
     const button=event.target.closest("[data-attachment-index]");
@@ -290,52 +304,142 @@
     setStatus(selectedFiles.length?"Attachment removed. The other files and message are unchanged.":"Attachment removed. Your message is unchanged.");
   });
 
-  // MediaRecorder captures locally; nothing uploads until the normal Send action.
+  // WhatsApp-style composer: paperclip (photo / video / document), camera right
+  // beside the mic, and the mic turning into Send as soon as there is anything
+  // to send. No option sheet to read through.
+  const sendButton=form?.querySelector('.chat-send-button');
+  const attachButton=form?.querySelector('[data-composer-attach]');
+  const cameraButton=form?.querySelector('[data-composer-camera]');
+  const cameraInput=form?.querySelector('#conversation-camera');
+  // One place decides what the right-hand button is: mic, stop, or Send.
+  const syncComposerButtons=()=>{
+    if(form&&typeof voiceState==='function')voiceState(form.dataset.voiceState||'idle');
+  };
+  // Files from the paperclip and from the camera share one queue.
+  const queueFiles=incoming=>{
+    const added=Array.from(incoming||[]);
+    if(!added.length)return;
+    selectedFiles=selectedFiles.concat(added);
+    syncFileInput();
+    showAttachmentPreview();
+    syncComposerButtons();
+  };
+  attachButton?.addEventListener('click',()=>{
+    if(!fileInput)return;
+    fileInput.setAttribute('accept','image/*,video/*,audio/*,application/pdf');
+    fileInput.click();
+  });
+  cameraButton?.addEventListener('click',()=>{
+    if(cameraInput)cameraInput.click();
+    else if(fileInput){fileInput.setAttribute('accept','image/*,video/*');fileInput.click();}
+  });
+  cameraInput?.addEventListener('change',()=>{
+    queueFiles(cameraInput.files);
+    cameraInput.value='';
+  });
+  input?.addEventListener('input',syncComposerButtons);
+
+  // Voice notes. Tapping the mic starts recording visibly: the button becomes a
+  // stop square, a live timer appears under the box, and Send stays hidden until
+  // the recording has been stopped and staged.
   let voiceRecorder=null,voiceStream=null,voiceTimer=null,voiceBlobUrl=null,voiceFile=null,voiceRequesting=false,voiceLeaving=false;
   const voiceTools=form?.querySelector('[data-voice-tools]');
-  const recordButton=voiceTools?.querySelector('[data-voice-record]');
-  const stopButton=voiceTools?.querySelector('[data-voice-stop]');
+  const recordButton=form?.querySelector('[data-voice-record]');
   const discardButton=voiceTools?.querySelector('[data-voice-discard]');
   const voiceStatus=voiceTools?.querySelector('[data-voice-status]');
+  const voiceDot=voiceTools?.querySelector('[data-voice-dot]');
   const voicePreview=voiceTools?.querySelector('[data-voice-preview]');
+  const composerReady=()=>Boolean((input?.value||'').trim()||selectedFiles.length);
+  function voiceState(state){
+    if(!form)return;
+    form.dataset.voiceState=state;
+    if(recordButton){
+      recordButton.hidden=!(state==='recording'||state==='starting'||!composerReady());
+      recordButton.setAttribute('aria-pressed',String(state==='recording'));
+      recordButton.setAttribute('aria-label',state==='recording'?'Stop recording':'Record an audio message');
+      recordButton.disabled=state==='starting';
+    }
+    if(sendButton)sendButton.hidden=state==='recording'||state==='starting'||!composerReady();
+    if(voiceTools)voiceTools.hidden=state==='idle';
+    if(voiceDot)voiceDot.hidden=state!=='recording';
+    if(discardButton)discardButton.hidden=state!=='ready';
+    if(voicePreview)voicePreview.hidden=state!=='ready';
+  }
+  const voiceSay=text=>{if(voiceStatus)voiceStatus.textContent=text;};
   function releaseMicrophone(){clearInterval(voiceTimer);voiceStream?.getTracks().forEach(t=>t.stop());voiceStream=null;}
   function clearVoice(){
     if(voiceRecorder?.state==='recording')return;
     if(voiceBlobUrl)URL.revokeObjectURL(voiceBlobUrl);voiceBlobUrl=null;
     if(voiceFile)selectedFiles=selectedFiles.filter(f=>f!==voiceFile);voiceFile=null;
-    if(voicePreview){voicePreview.pause();voicePreview.removeAttribute('src');voicePreview.hidden=true;}
-    if(discardButton)discardButton.hidden=true;
-    if(recordButton)recordButton.disabled=false;
-    if(voiceStatus)voiceStatus.textContent='Ready. Record or attach a supported file; nothing uploads until Send.';
+    if(voicePreview){voicePreview.pause();voicePreview.removeAttribute('src');}
+    voiceSay('');
+    voiceState('idle');
     syncFileInput();showAttachmentPreview();
   }
-  discardButton?.addEventListener('click',()=>{clearVoice();voiceStatus.textContent='Discarded. Record again or use the attachment control.';});
-  stopButton?.addEventListener('click',()=>{if(voiceRecorder?.state==='recording')voiceRecorder.stop();});
+  discardButton?.addEventListener('click',()=>{clearVoice();syncComposerButtons();setStatus('Recording discarded.');});
   recordButton?.addEventListener('click',async()=>{
     if(sendingMessage)return;
-    if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){voiceStatus.textContent='Recording unavailable. Use the attachment control or text.';return;}
-    clearVoice();recordButton.disabled=true;voiceRequesting=true;
+    if(voiceRecorder?.state==='recording'){voiceRecorder.stop();return;}
+    if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){
+      voiceState('idle');
+      if(voiceTools)voiceTools.hidden=false;
+      voiceSay('This browser cannot record over this connection. Open the site on https, or attach an audio file with the paperclip.');
+      setStatus('Recording needs https (or localhost). You can still attach an audio file.');
+      return;
+    }
+    clearVoice();
+    voiceState('starting');
+    voiceSay('Asking for microphone permission…');
+    voiceRequesting=true;
     try{
-      voiceStream=await navigator.mediaDevices.getUserMedia({audio:true});voiceRequesting=false;
-      if(voiceLeaving||sendingMessage){releaseMicrophone();recordButton.disabled=false;return;}
-      const mime=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(t=>MediaRecorder.isTypeSupported(t));
+      voiceStream=await navigator.mediaDevices.getUserMedia({audio:true});
+      voiceRequesting=false;
+      if(voiceLeaving||sendingMessage){releaseMicrophone();voiceState('idle');return;}
+      const mime=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(t=>window.MediaRecorder.isTypeSupported(t));
       if(!mime)throw Error('unsupported');
       const chunks=[];let bytes=0;const started=Date.now();
       voiceRecorder=new MediaRecorder(voiceStream,{mimeType:mime});
-      voiceRecorder.ondataavailable=e=>{if(e.data.size){chunks.push(e.data);bytes+=e.data.size;if(bytes>5*1024*1024&&voiceRecorder.state==='recording')voiceRecorder.stop();}};
+      voiceRecorder.ondataavailable=e=>{if(e.data.size){chunks.push(e.data);bytes+=e.data.size;if(bytes>MEDIA_LIMIT_BYTES&&voiceRecorder.state==='recording')voiceRecorder.stop();}};
       voiceRecorder.onstop=()=>{
-        releaseMicrophone();stopButton.hidden=true;
-        if(bytes>5*1024*1024){recordButton.disabled=false;voiceStatus.textContent='Recording exceeded 5 MB. Please re-record a shorter note.';return;}
+        releaseMicrophone();
+        if(bytes>MEDIA_LIMIT_BYTES){
+          voiceState('idle');
+          if(voiceTools)voiceTools.hidden=false;
+          voiceSay(`That recording passed ${MEDIA_LIMIT_MB} MB. Record a shorter one.`);
+          setStatus(`Recording exceeded ${MEDIA_LIMIT_MB} MB.`);
+          return;
+        }
+        const seconds=Math.max(1,Math.round((Date.now()-started)/1000));
         const ext=mime.includes('mp4')?'m4a':mime.includes('ogg')?'ogg':'webm';
         voiceFile=new File(chunks,'voice-note.'+ext,{type:mime});
-        selectedFiles.push(voiceFile);syncFileInput();showAttachmentPreview();
-        voiceBlobUrl=URL.createObjectURL(voiceFile);voicePreview.src=voiceBlobUrl;voicePreview.hidden=false;discardButton.hidden=false;
-        voiceStatus.textContent='Preview your note. Use Send to upload, or Discard / re-record.';
+        selectedFiles.push(voiceFile);
+        voiceBlobUrl=URL.createObjectURL(voiceFile);
+        if(voicePreview)voicePreview.src=voiceBlobUrl;
+        syncFileInput();showAttachmentPreview();
+        voiceState('ready');
+        voiceSay(`Voice note ready · ${seconds}s. Tap Send to send it, or discard.`);
       };
-      voiceRecorder.onerror=()=>{releaseMicrophone();recordButton.disabled=false;stopButton.hidden=true;voiceStatus.textContent='Recording failed. Use file upload or text.';};
-      voiceRecorder.start(250);stopButton.hidden=false;
-      voiceTimer=setInterval(()=>{const seconds=Math.floor((Date.now()-started)/1000);voiceStatus.textContent='● Recording '+seconds+' / 90 seconds';if(Date.now()-started>=89500&&voiceRecorder.state==='recording')voiceRecorder.stop();},200);
-    }catch(_){voiceRequesting=false;releaseMicrophone();recordButton.disabled=false;voiceStatus.textContent='Microphone denied or unavailable. Use the attachment control or text.';}
+      voiceRecorder.onerror=()=>{
+        releaseMicrophone();voiceRequesting=false;voiceState('idle');
+        if(voiceTools)voiceTools.hidden=false;
+        voiceSay('Recording failed. Try again, or attach an audio file.');
+      };
+      voiceRecorder.start(250);
+      voiceState('recording');
+      const clock=seconds=>`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
+      voiceTimer=setInterval(()=>{
+        const seconds=Math.floor((Date.now()-started)/1000);
+        voiceSay(`Recording ${clock(seconds)} · tap the button to stop`);
+        if(seconds>=VOICE_MAX_SECONDS&&voiceRecorder.state==='recording')voiceRecorder.stop();
+      },250);
+    }catch(error){
+      voiceRequesting=false;releaseMicrophone();voiceState('idle');
+      if(voiceTools)voiceTools.hidden=false;
+      const denied=error?.name==='NotAllowedError'||error?.name==='SecurityError';
+      voiceSay(denied?'Microphone permission was blocked. Allow it in the browser, or attach an audio file.'
+                     :'No microphone was available. Attach an audio file instead.');
+      setStatus('Recording unavailable.');
+    }
   });
   document.addEventListener('visibilitychange',()=>{if(document.hidden&&voiceRecorder?.state==='recording')voiceRecorder.stop();});
   window.addEventListener('pagehide',()=>{voiceLeaving=true;if(voiceRecorder?.state==='recording'){voiceRecorder.onstop=null;voiceRecorder.stop();}releaseMicrophone();if(voiceBlobUrl)URL.revokeObjectURL(voiceBlobUrl);});
@@ -343,13 +447,13 @@
   form?.addEventListener("submit",async event=>{
     event.preventDefault();
     if(sendingMessage)return;
-    if(voiceRequesting||voiceRecorder?.state==="recording"){setStatus("Stop and preview the recording before sending.");return;}
+    if(voiceRequesting||voiceRecorder?.state==="recording"){setStatus("Stop the recording before sending.");return;}
     const body=input?.value.trim()||"";
     const files=selectedFiles.slice();
     if(!body&&!files.length){setStatus("Write a message or attach a photo or file first.");input?.focus();return;}
     if(files.length>5){setStatus("You can attach up to five files to one message.");fileInput?.focus();return;}
-    const oversized=files.find(file=>file.size>(file.type.startsWith("audio/")?5:10)*1024*1024);
-    if(oversized){setStatus(`${oversized.name} is over the 10 MB attachment limit.`);fileInput?.focus();return;}
+    const oversized=files.find(file=>file.size>MEDIA_LIMIT_BYTES);
+    if(oversized){setStatus(`${oversized.name} is ${MB(oversized.size)}; the limit is ${MEDIA_LIMIT_MB} MB per file.`);fileInput?.focus();return;}
     const data=new FormData(form);
     data.delete("attachments");
     files.forEach(file=>data.append("attachments",file,file.name));
@@ -390,6 +494,7 @@
   async function loop(){if(!document.hidden)await refresh();delay=Math.min(delay*1.2,12000);timer=window.setTimeout(loop,delay);}
   window.addEventListener("beforeunload",()=>window.clearTimeout(timer),{once:true});
   fileInput&&showAttachmentPreview();
+  syncComposerButtons();
   refresh();
   timer=window.setTimeout(loop,delay);
 
@@ -423,4 +528,162 @@
       total.value=sum?sum.toFixed(2):"";
     });
   });
+  const tools=document.getElementById("chat-service-tools");
+  document.addEventListener("keydown",event=>{if(event.key==="Escape"&&tools?.open)tools.open=false;});
+})();
+
+/* Escrow payment lives in the chat: while the provider link is being prepared,
+   poll our own status route and swap the strip in place — no page hop. */
+(() => {
+  const strip = document.querySelector("[data-payment-watch]");
+  if (!strip) return;
+  const endpoint = strip.getAttribute("data-payment-watch");
+  if (!endpoint) return;
+  let attempts = 0;
+  let waitedWithoutLink = false;
+  const MAX_ATTEMPTS = 40;
+  const tick = async () => {
+    if (attempts >= MAX_ATTEMPTS) return;
+    attempts += 1;
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const status = String(data.status || "").toUpperCase();
+        const checkout = String(data.authorization_url || "");
+        const button = strip.querySelector("[data-payment-pending-form] button");
+        if (!checkout) {
+          waitedWithoutLink = true;
+        } else {
+          const form = strip.querySelector("[data-payment-pending-form]");
+          if (form && !strip.querySelector("[data-payment-checkout]")) {
+            const link = document.createElement("a");
+            link.className = "button button-primary button-small";
+            link.href = checkout;
+            link.setAttribute("data-artisan-action", "");
+            link.setAttribute("data-payment-checkout", "");
+            link.textContent = button ? button.textContent.trim() : "Continue secure payment";
+            form.replaceWith(link);
+          }
+          // The payer tapped "Pay" and the link only arrived now: take them to
+          // the provider instead of asking for a second tap. Only when this page
+          // actually waited for it — a chat opened with a link already in hand
+          // must not navigate on its own, or paying and coming back would bounce
+          // the payer straight back to Flutterwave.
+          if (waitedWithoutLink) {
+            window.location.assign(checkout);
+            return;
+          }
+        }
+        if (status && status !== "PAYMENT_PENDING") {
+          window.location.reload();
+          return;
+        }
+      }
+    } catch (error) {
+      /* offline: try again on the next tick */
+    }
+    window.setTimeout(tick, 9000);
+  };
+  window.setTimeout(tick, 2500);
+})();
+
+/* Bank transfer is paid inside this page: copy the amount or the account
+   number, watch the clock drain, and notice quietly when the money lands. */
+(() => {
+  const card = document.querySelector("[data-transfer-card]");
+  if (!card) return;
+
+  const chip = card.querySelector("[data-transfer-chip]");
+  const bar = card.querySelector("[data-transfer-bar]");
+  const clock = card.querySelector("[data-transfer-clock]");
+  const total = Math.max(1, Number(card.getAttribute("data-transfer-seconds") || 0));
+  const deadline = Date.now() + total * 1000;
+
+  card.querySelectorAll("[data-copy]").forEach((button) => {
+    const label = button.querySelector("[data-copy-label]") || button;
+    const reset = () => {
+      button.removeAttribute("data-copied");
+      label.textContent = "Copy";
+    };
+    button.addEventListener("click", async () => {
+      const value = button.getAttribute("data-copy") || "";
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch (error) {
+        /* Clipboard blocked (http, or a permission prompt): fall back. */
+        const field = button
+          .closest(".chat-transfer-hero")
+          ?.querySelector("[data-copy-value]");
+        if (field) {
+          const range = document.createRange();
+          range.selectNodeContents(field);
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          document.execCommand("copy");
+          selection.removeAllRanges();
+        }
+      }
+      button.setAttribute("data-copied", "true");
+      label.textContent = "Copied";
+      window.setTimeout(reset, 1800);
+    });
+  });
+
+  const timeLabel = (date) =>
+    date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const paint = () => {
+    const left = Math.max(0, deadline - Date.now());
+    const minutes = Math.ceil(left / 60000);
+    if (bar) {
+      bar.style.width = `${Math.min(100, (left / (total * 1000)) * 100)}%`;
+      bar.setAttribute("data-low", left > 0 && left < 10 * 60000 ? "true" : "false");
+    }
+    if (clock) {
+      clock.textContent =
+        left > 0
+          ? `Closes at ${timeLabel(new Date(deadline))} — ${minutes} minute${minutes === 1 ? "" : "s"} left.`
+          : "This account has closed. Tap pay again for a fresh one — nothing has been charged.";
+    }
+    if (chip && left <= 0) {
+      chip.textContent = "Expired";
+      chip.setAttribute("data-state", "expired");
+    }
+  };
+  paint();
+  window.setInterval(paint, 1000);
+
+  const endpoint = card.getAttribute("data-payment-status");
+  if (!endpoint) return;
+  let attempts = 0;
+  const tick = async () => {
+    if (attempts >= 120) return;
+    attempts += 1;
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const status = String(data.status || "").toUpperCase();
+        if (status && status !== "PAYMENT_PENDING") {
+          if (chip) {
+            chip.textContent = status === "HELD" ? "Paid" : status.replace(/_/g, " ");
+            chip.setAttribute("data-state", status === "HELD" ? "paid" : "expired");
+          }
+          window.setTimeout(() => window.location.reload(), 900);
+          return;
+        }
+      }
+    } catch (error) {
+      /* offline: try again on the next tick */
+    }
+    window.setTimeout(tick, 6000);
+  };
+  window.setTimeout(tick, 6000);
 })();

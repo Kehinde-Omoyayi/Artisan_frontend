@@ -42,6 +42,20 @@ def _safe_text(value):
     return text
 
 
+def _is_metadata(key, value):
+    """True when a key is transport metadata rather than a field the user can fix.
+
+    ``code`` is metadata when its value is a token ("PERMISSION_DENIED") but a real
+    field when its value is a sentence ("That authenticator code is not valid.").
+    """
+    normalized = str(key).strip().casefold().replace("-", "_")
+    if normalized not in _METADATA_KEYS:
+        return False
+    if isinstance(value, str) and " " in value.strip() and _safe_text(value):
+        return False
+    return True
+
+
 def _field_label(key):
     key = str(key).replace("_", " ").replace(".", " ").strip()
     if not key:
@@ -67,7 +81,9 @@ def _collect(value, *, label=""):
             return parts
         for key, child in value.items():
             normalized = str(key).strip().casefold().replace("-", "_")
-            if normalized in _METADATA_KEYS or normalized.startswith("trace"):
+            if normalized.startswith("trace"):
+                continue
+            if _is_metadata(key, child):
                 continue
             if normalized in _MESSAGE_KEYS:
                 parts.extend(_collect(child, label=label))
@@ -133,7 +149,9 @@ def normalize_api_error(payload=None, status_code=None, *, network_error=False):
         else:
             for key, value in payload.items():
                 normalized = str(key).strip().casefold().replace("-", "_")
-                if normalized in _METADATA_KEYS | _MESSAGE_KEYS or normalized == "details":
+                if normalized in _MESSAGE_KEYS or normalized == "details":
+                    continue
+                if _is_metadata(key, value):
                     continue
                 detail_parts.extend(_collect({key: value}))
     elif isinstance(payload, (list, tuple)):

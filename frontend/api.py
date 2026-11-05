@@ -15,6 +15,17 @@ from .api_errors import flatten_errors, normalize_api_error
 
 logger = logging.getLogger(__name__)
 
+# Shared HTTP session for the "http" transport: TLS/TCP handshake and DNS cost
+# otherwise repeat for every API call inside a single page render, which is the
+# main per-page latency source when the API runs as a separate service.
+_HTTP_SESSION = requests.Session()
+_HTTP_SESSION.headers.update({"Connection": "keep-alive"})
+adapter = requests.adapters.HTTPAdapter(
+    pool_connections=4, pool_maxsize=16, max_retries=0
+)
+_HTTP_SESSION.mount("http://", adapter)
+_HTTP_SESSION.mount("https://", adapter)
+
 
 class APIError(Exception):
     def __init__(self, status_code, payload=None, text="", *, network_error=False):
@@ -124,7 +135,7 @@ class APIClient:
             url = path if path.startswith("http") else f'{self.base}/{path.lstrip("/")}'
         try:
             if files:
-                response = requests.request(
+                response = _HTTP_SESSION.request(
                     method,
                     url,
                     params=params,
@@ -134,7 +145,7 @@ class APIClient:
                     timeout=self.timeout,
                 )
             else:
-                response = requests.request(
+                response = _HTTP_SESSION.request(
                     method,
                     url,
                     params=params,
@@ -349,8 +360,11 @@ class APIClient:
         files=None,
         retry=True,
         idempotency_key=None,
+        headers=None,
     ):
+        extra_headers = headers or {}
         headers = self._headers()
+        headers.update({str(key): str(value) for key, value in extra_headers.items()})
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
         status_code, text, response = self._send(
@@ -367,6 +381,7 @@ class APIClient:
                     files=files,
                     retry=False,
                     idempotency_key=idempotency_key,
+                    headers=extra_headers,
                 )
             self.clear_session()
 
@@ -427,9 +442,14 @@ class APIClient:
         )
         return body, headers.get("Content-Type", "application/octet-stream"), headers
 
-    def post(self, path, data=None, files=None, idempotency_key=None):
+    def post(self, path, data=None, files=None, idempotency_key=None, headers=None):
         return self._call(
-            "POST", path, data=data, files=files, idempotency_key=idempotency_key
+            "POST",
+            path,
+            data=data,
+            files=files,
+            idempotency_key=idempotency_key,
+            headers=headers,
         )
 
     def put(self, path, data=None, files=None, idempotency_key=None):

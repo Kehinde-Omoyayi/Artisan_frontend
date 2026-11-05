@@ -18,4 +18,5 @@ urlpatterns = [
     path("notifications/", include("frontend.notification_urls")),
     path("support/", include("frontend.support_urls")),
     path("system/", include("frontend.system_urls")),
+    path("console/", include("frontend.console_urls")),
 ]

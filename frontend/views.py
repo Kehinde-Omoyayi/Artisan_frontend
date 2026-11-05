@@ -19,6 +19,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.utils.dateparse import parse_datetime
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from .api import (
@@ -109,8 +110,8 @@ LANDING_VISUAL_THEMES = (
 
 PENDING_ACTION_SESSION_KEY = "pending_protected_action"
 PAYMENT_NOTICE_SESSION_KEY = "payment_notice_pending"
-PENDING_REQUEST_DRAFT_SESSION_KEY = "pending_service_request_draft"
-PENDING_REQUEST_UPDATE_DRAFT_SESSION_KEY = "pending_service_request_update_draft"
+PENDING_REQUEST_FORM_SESSION_KEY = "pending_service_request_form_values"
+PENDING_REQUEST_UPDATE_FORM_SESSION_KEY = "pending_service_request_update_form_values"
 PROFILE_COMPLETION_NEXT_SESSION_KEY = "profile_completion_next"
 PENDING_ACTION_TTL_SECONDS = 30 * 60
 ACTION_PROFILE_REQUIRED_FIELDS = (
@@ -129,7 +130,7 @@ ACTION_PROFILE_FIELD_LABELS = {
     "state": "State or region",
     "area": "Area or locality",
 }
-SERVICE_REQUEST_DRAFT_FIELDS = (
+SERVICE_REQUEST_FORM_FIELDS = (
     "category_name",
     "service_name",
     "location_country_filter",
@@ -187,13 +188,13 @@ def safe_internal_next(request, value):
 
 
 def _service_request_resume_url():
-    return f"{reverse('service-requests')}?resume=draft"
+    return f"{reverse('service-requests')}?resume=form"
 
 
-def _safe_service_request_draft(data):
+def _safe_service_request_form_values(data):
     return {
         field: str(data.get(field, "") or "")[:10000]
-        for field in SERVICE_REQUEST_DRAFT_FIELDS
+        for field in SERVICE_REQUEST_FORM_FIELDS
         if field in data
     }
 
@@ -220,7 +221,7 @@ def _store_pending_action(request, kind, **values):
 def _pending_action_target(request, action):
     if not isinstance(action, dict):
         return reverse("home")
-    if action.get("kind") == "service_request_draft":
+    if action.get("kind") == "service_request_form":
         return _service_request_resume_url()
     if action.get("kind") == "service_conversation":
         try:
@@ -245,7 +246,7 @@ def _pending_action_target(request, action):
     if action.get("kind") == "service_request_update":
         request_id = str(action.get("service_request_id") or "")
         if request_id.isdigit():
-            return f"{reverse('service-request-detail', kwargs={'pk': request_id})}?resume=draft"
+            return f"{reverse('service-request-detail', kwargs={'pk': request_id})}?resume=form"
         return reverse("service-requests")
     return reverse("home")
 
@@ -295,11 +296,11 @@ def _action_profile_health_summary(profile):
     }
 
 
-def _clear_pending_action(request, *, clear_draft=False):
+def _clear_pending_action(request, *, clear_form_values=False):
     request.session.pop(PENDING_ACTION_SESSION_KEY, None)
     request.session.pop(PROFILE_COMPLETION_NEXT_SESSION_KEY, None)
-    if clear_draft:
-        request.session.pop(PENDING_REQUEST_DRAFT_SESSION_KEY, None)
+    if clear_form_values:
+        request.session.pop(PENDING_REQUEST_FORM_SESSION_KEY, None)
     request.session.modified = True
 
 
@@ -373,10 +374,10 @@ def _capture_anonymous_post(request, view_name, kwargs):
         _store_pending_action(request, "service_conversation", **action)
         return detail_target
     if view_name == "service_requests":
-        request.session[PENDING_REQUEST_DRAFT_SESSION_KEY] = (
-            _safe_service_request_draft(request.POST)
+        request.session[PENDING_REQUEST_FORM_SESSION_KEY] = (
+            _safe_service_request_form_values(request.POST)
         )
-        _store_pending_action(request, "service_request_draft")
+        _store_pending_action(request, "service_request_form")
         request.session.modified = True
         return _service_request_resume_url()
     return safe_internal_next(request, request.get_full_path()) or reverse("home")
@@ -392,7 +393,7 @@ def _continue_pending_protected_action(request):
     except (TypeError, ValueError):
         created_at = 0
     if created_at <= 0 or time.time() - created_at > PENDING_ACTION_TTL_SECONDS:
-        _clear_pending_action(request, clear_draft=True)
+        _clear_pending_action(request, clear_form_values=True)
         messages.info(
             request,
             "That saved action expired. Please start again from the artisan or request page.",
@@ -403,7 +404,7 @@ def _continue_pending_protected_action(request):
     role = current_role(request)
     if kind == "service_request_update":
         if role != "customer":
-            _clear_pending_action(request, clear_draft=True)
+            _clear_pending_action(request, clear_form_values=True)
             messages.error(
                 request, "Only customer accounts can update a service request."
             )
@@ -455,9 +456,9 @@ def _continue_pending_protected_action(request):
         messages.success(request, "Your message was sent.")
         return redirect(destination)
 
-    if kind == "service_request_draft":
+    if kind == "service_request_form":
         if role != "customer":
-            _clear_pending_action(request, clear_draft=True)
+            _clear_pending_action(request, clear_form_values=True)
             messages.error(
                 request, "Service requests are available to customer accounts."
             )
@@ -482,7 +483,7 @@ def _continue_pending_protected_action(request):
     if kind != "service_conversation":
         # Legacy direct-chat pending actions predate the request-first flow; they
         # cannot be replayed safely, so they expire like any stale saved action.
-        _clear_pending_action(request, clear_draft=True)
+        _clear_pending_action(request, clear_form_values=True)
         messages.info(
             request,
             "That saved action is no longer available. Start from the artisan's request form instead.",
@@ -531,7 +532,7 @@ def _continue_pending_protected_action(request):
             "The conversation could not be opened. Please try again from the artisan profile.",
         )
         return redirect(destination)
-    _clear_pending_action(request, clear_draft=True)
+    _clear_pending_action(request, clear_form_values=True)
     messages.success(request, "Your private conversation is ready.")
     return redirect("conversation-detail", conversation_id=conversation_id)
 
@@ -1342,7 +1343,7 @@ def _clear_staff_mfa_pending(request):
 
 def _start_staff_mfa_pending(request, payload):
     APIClient(request).clear_session()
-    _clear_pending_action(request, clear_draft=True)
+    _clear_pending_action(request, clear_form_values=True)
     request.session.pop(PROFILE_COMPLETION_NEXT_SESSION_KEY, None)
     request.session.cycle_key()
     request.session["staff_mfa_challenge_id"] = str(
@@ -1887,7 +1888,7 @@ def reset_password(request):
 
 @require_POST
 def logout(request):
-    _clear_pending_action(request, clear_draft=True)
+    _clear_pending_action(request, clear_form_values=True)
     request.session.pop("login_next", None)
     request.session.pop("api_role", None)
     APIClient(request).logout()
@@ -3085,6 +3086,31 @@ def _private_conversation_messages(payload, conversation_id):
     return payload
 
 
+_MEDIA_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "application/pdf": ".pdf",
+    "audio/webm": ".webm",
+    "audio/ogg": ".ogg",
+    "audio/wav": ".wav",
+    "audio/mpeg": ".mp3",
+    "audio/mp4": ".m4a",
+    "video/webm": ".webm",
+    "video/mp4": ".mp4",
+}
+
+
+def _conversation_media_disposition(mime):
+    """Photos and recordings preview inline; documents download with a real name."""
+    mime = str(mime or "").split(";")[0].strip().lower()
+    extension = _MEDIA_EXTENSIONS.get(mime, "")
+    if mime.startswith(("image/", "audio/", "video/")):
+        return f'inline; filename="service-media{extension}"'
+    return f'attachment; filename="document{extension or ".bin"}"'
+
+
 @api_guard
 @require_GET
 def conversation_media_proxy(request, conversation_id, attachment_id):
@@ -3114,7 +3140,7 @@ def conversation_media_proxy(request, conversation_id, attachment_id):
             else:
                 response = HttpResponse(body, content_type=mime)
         response["Accept-Ranges"] = "bytes"
-        response["Content-Disposition"] = 'inline; filename="service-media"'
+        response["Content-Disposition"] = _conversation_media_disposition(mime)
     response["Cache-Control"] = "private, no-store, max-age=0"
     response["X-Content-Type-Options"] = "nosniff"
     response["Referrer-Policy"] = "no-referrer"
@@ -3185,6 +3211,90 @@ def _offer_materials_payload(raw):
     return items
 
 
+def _offer_payload_from_post(post):
+    """The itemised pricing payload — exactly the fields the form collects."""
+    return {
+        "labour_amount": post.get("labour_amount", ""),
+        "materials_amount": post.get("materials_amount", "0") or "0",
+        "total_amount": post.get("total_amount", ""),
+        "materials": _offer_materials_payload(post.get("materials_json", "")),
+        "transport_amount": post.get("transport_amount", "0") or "0",
+        "additional_amount": post.get("additional_amount", "0") or "0",
+        "additional_charge_details": post.get("additional_charge_details", ""),
+        "materials_included": post.get("materials_included", "") == "true",
+        "scheduled_start": _offer_datetime_payload(post.get("scheduled_start")),
+        "duration_value": (post.get("duration_value", "") or "").strip(),
+        "duration_unit": (post.get("duration_unit", "") or "").strip().upper(),
+    }
+
+
+OFFER_FIELD_LABELS = {
+    "labour_amount": "Labour (₦)",
+    "materials_amount": "Materials subtotal",
+    "materials": "Items",
+    "total_amount": "Payable total",
+    "transport_amount": "Transport (₦)",
+    "additional_amount": "Additional charges (₦)",
+    "additional_charge_details": "Additional charge description",
+    "scheduled_start": "Scheduled start",
+    "duration_value": "Duration value",
+    "duration_unit": "Duration unit",
+    "parent_offer_id": "Quote being revised",
+    "materials_included": "Materials included",
+    "non_field_errors": "Offer",
+}
+
+
+def _api_error_items(exc):
+    """Flatten a DRF error body into (field, message) pairs."""
+    payload = getattr(exc, "detail", None) or getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        details = payload.get("details", payload)
+        if isinstance(details, dict):
+            pairs = []
+            for field, messages in details.items():
+                if isinstance(messages, (list, tuple)):
+                    for message in messages:
+                        pairs.append((str(field), str(message)))
+                else:
+                    pairs.append((str(field), str(messages)))
+            return pairs
+        if isinstance(details, (list, tuple)):
+            return [("non_field_errors", str(message)) for message in details]
+    return [("non_field_errors", str(payload or "The offer could not be sent."))]
+
+
+def _offer_error_context(exc):
+    pairs = _api_error_items(exc)
+    messages = [
+        f"{OFFER_FIELD_LABELS.get(field, field.replace('_', ' ').title())}: {message}"
+        if field != "non_field_errors"
+        else message
+        for field, message in pairs
+    ]
+    return messages, {field: message for field, message in pairs}
+
+
+def _offer_draft_context(post):
+    """Everything the artisan typed, so a failed send never blanks the form."""
+    import json as _json
+
+    return {
+        "labour_amount": post.get("labour_amount", ""),
+        "materials_json": post.get("materials_json", "[]") or "[]",
+        "materials_amount": post.get("materials_amount", "0") or "0",
+        "materials_included": post.get("materials_included", "") == "true",
+        "transport_amount": post.get("transport_amount", "0") or "0",
+        "additional_amount": post.get("additional_amount", "0") or "0",
+        "additional_charge_details": post.get("additional_charge_details", ""),
+        "scheduled_start": post.get("scheduled_start", ""),
+        "duration_value": post.get("duration_value", ""),
+        "duration_unit": post.get("duration_unit", "DAYS") or "DAYS",
+        "total_amount": post.get("total_amount", ""),
+        "materials": _offer_materials_payload(post.get("materials_json", "")),
+    }
+
+
 def _offer_datetime_payload(value):
     """Treat datetime-local fallbacks as Lagos time; preserve explicit browser offsets/UTC values."""
     if not value:
@@ -3218,7 +3328,8 @@ def service_worker(request):
     return response
 
 
-def _conversation_request_payload(post_data, *, submit_request):
+def _conversation_submit_payload(post_data):
+    """Build the single explicit request submission payload."""
     payload = {}
     nullable_fields = {
         "service_id",
@@ -3239,7 +3350,7 @@ def _conversation_request_payload(post_data, *, submit_request):
             payload[field] = None
         else:
             payload[field] = value
-    payload["submit_request"] = bool(submit_request)
+    payload["submit_request"] = True
     return payload
 
 
@@ -3265,70 +3376,159 @@ def _conversation_request_error_payload(exc):
     }
 
 
+PHASE_STEP_DEFINITIONS = (
+    ("REQUEST", "Request & Chat", "Describe the work and agree the request details."),
+    ("OFFER", "Offer & Negotiation", "Review scope, price, and the agreed schedule."),
+    ("PAY", "Booking & Escrow", "The original booking payment is verified and held in escrow."),
+    ("PROGRESS", "Service in Progress", "Share updates and photos in this conversation."),
+    ("ADD_ONS", "Separate add-on orders", "Optional extra work is quoted and funded separately."),
+    ("COMPLETE", "Completion & Review", "The customer confirms completion and leaves a review."),
+    ("DISPUTE", "Support (if needed)", "Dispute handling keeps relevant escrow funds frozen."),
+)
+
+_PHASE_STATE_INDEX = {
+    "OPEN": 0,
+    "NEGOTIATING": 1,
+    "AWAITING_PAYMENT": 2,
+    "BOOKING": 2,
+    "ACCEPTED": 2,
+    "ACTIVE": 3,
+    "IN_PROGRESS": 3,
+    "COMPLETION_REQUESTED": 5,
+    "COMPLETED": 6,
+    "DISPUTED": 6,
+    # A cancelled or declined booking stopped at the booking step; the track
+    # keeps its progress instead of snapping back to step one.
+    "CLOSED": 2,
+    "CANCELLED": 2,
+    "REJECTED": 2,
+}
+
+
+def _fallback_phase_steps(conversation):
+    """Rebuild the project track when an older API payload omits `journey`."""
+    state = str(conversation.get("state") or "OPEN").upper()
+    current_index = _PHASE_STATE_INDEX.get(state, 0)
+    steps = []
+    for index, (key, title, description) in enumerate(PHASE_STEP_DEFINITIONS):
+        steps.append(
+            {
+                "step": index + 1,
+                "key": key,
+                "title": title,
+                "description": description,
+                "complete": index < current_index,
+                "current": index == current_index,
+                "optional": key in {"ADD_ONS", "DISPUTE"},
+            }
+        )
+    return steps
+
+
+def _request_still_being_written(conversation):
+    """True while the customer has not yet sent the request to the artisan.
+
+    The API reports a submitted request under `service_request` and keeps the
+    lifecycle status of anything else under `request_reference`; a request that
+    was never written has neither. All three states mean the same thing to the
+    customer: the chat is open, but the message box stays shut until they press
+    "Request service".
+    """
+    if not isinstance(conversation, dict):
+        return False
+    if conversation.get("viewer_role") != "customer":
+        return False
+    if conversation.get("booking"):
+        return False
+    if conversation.get("service_request"):
+        return False
+    reference = conversation.get("request_reference")
+    status = ""
+    if isinstance(reference, dict):
+        status = str(reference.get("status") or "").upper()
+    return status in {"", "DRAFT"}
+
+
+def _conversation_request_summary(conversation):
+    """Read-only brief from authoritative server data; never a form."""
+    source = conversation.get("service_request") or conversation.get("request_draft") or {}
+    if not isinstance(source, dict) or not source:
+        return {}
+    return {
+        "service": (
+            source.get("service")
+            or source.get("category")
+            or source.get("service_name")
+            or source.get("category_name")
+            or ""
+        ),
+        "location": source.get("location") or source.get("location_label") or "",
+        "preferred_date": source.get("preferred_date") or "",
+        "budget": source.get("budget") or "",
+        "description": source.get("description") or "",
+    }
+
+
 @api_guard
 def conversation_detail(request, conversation_id):
     client = APIClient(request)
+    offer_errors = []
+    offer_field_errors = {}
+    offer_draft = {}
+    offer_form = ""
     try:
         if request.method == "POST":
             action = request.POST.get("action", "message")
-            key = new_idempotency_key(f"conversation-{action}")
-            if action in {"request_draft", "request_submit", "request_close"}:
-                payload = _conversation_request_payload(
-                    request.POST,
-                    submit_request=action == "request_submit",
-                )
-                if action == "request_close":
-                    payload = {"close_request": True, "submit_request": False}
+            # The key travels with the form, so retrying a failed send replays the
+            # same operation instead of creating a second offer or booking.
+            key = (
+                request.POST.get("idempotency_key", "").strip()
+                or new_idempotency_key(f"conversation-{action}")
+            )
+            if action == "request_submit":
+                # The chat opens on the artisan, but nothing can be said or
+                # offered until the customer has described the job and pressed
+                # Request service. The API builds the request from these fields
+                # and validates completeness.
+                payload = {
+                    field: request.POST.get(field, "").strip()
+                    for field in CONVERSATION_REQUEST_FIELDS
+                    if field in request.POST
+                }
+                payload["submit_request"] = True
                 try:
-                    _, updated_conversation, _ = client.patch(
+                    client.patch(
                         f"/conversations/{conversation_id}/request/",
                         payload,
                         idempotency_key=key,
                     )
                 except APIError as exc:
-                    if request_wants_json(request):
-                        response = JsonResponse(
-                            _conversation_request_error_payload(exc),
-                            status=exc.status_code,
-                        )
-                        response["Cache-Control"] = "no-store"
-                        return response
                     handle_api_error(request, exc)
                     return redirect(
                         "conversation-detail", conversation_id=conversation_id
                     )
-                if request_wants_json(request):
-                    response = JsonResponse(
-                        {
-                            "ok": True,
-                            "conversation": updated_conversation,
-                            "request_draft": (
-                                updated_conversation.get("request_draft")
-                                if isinstance(updated_conversation, dict)
-                                else None
-                            ),
-                            "service_request": (
-                                updated_conversation.get("service_request")
-                                if isinstance(updated_conversation, dict)
-                                else None
-                            ),
-                        }
-                    )
-                    response["Cache-Control"] = "no-store"
-                    return response
-                if action == "request_close":
-                    messages.success(
-                        request,
-                        "Request closed. The seven-day unbooked recording retention period starts now; holds may preserve evidence.",
-                    )
-                elif action == "request_submit":
-                    messages.success(
-                        request, "Your request was submitted to the artisan."
-                    )
-                else:
-                    messages.info(request, "Your request draft was saved.")
-                return redirect("conversation-detail", conversation_id=conversation_id)
-            elif action == "message":
+                messages.success(
+                    request,
+                    "Request sent. The artisan can now send you an itemised offer.",
+                )
+                return redirect(
+                    "conversation-detail", conversation_id=conversation_id
+                )
+            if action == "request_close":
+                # Explicit workflow action: close an unbooked request. No drafts.
+                client.patch(
+                    f"/conversations/{conversation_id}/request/",
+                    {"close_request": True, "submit_request": False},
+                    idempotency_key=key,
+                )
+                messages.success(
+                    request,
+                    "Request closed. Recordings are retained for seven days unless a preservation hold applies.",
+                )
+                return redirect(
+                    "conversation-detail", conversation_id=conversation_id
+                )
+            if action == "message":
                 body = request.POST.get("body", "").strip()
                 files = [
                     ("attachments", (item.name, item.file, item.content_type))
@@ -3363,59 +3563,23 @@ def conversation_detail(request, conversation_id):
                     files=files or None,
                     idempotency_key=key,
                 )
-            elif action == "description_done":
-                client.post(
-                    f"/conversations/{conversation_id}/description-confirm/",
-                    {},
-                    idempotency_key=key,
-                )
-                messages.success(
-                    request,
-                    "Description confirmed. You can now prepare the itemized quote.",
-                )
             elif action == "offer":
-                payload = {
-                    "labour_amount": request.POST.get("labour_amount"),
-                    "materials_amount": request.POST.get("materials_amount"),
-                    "total_amount": request.POST.get("total_amount"),
-                    "materials": _offer_materials_payload(
-                        request.POST.get("materials_json", "")
-                    ),
-                    **{
-                        k: request.POST.get(k, "0") or "0"
-                        for k in ("transport_amount", "additional_amount")
-                    },
-                    **{
-                        k: request.POST.get(k, "")
-                        for k in (
-                            "materials_details",
-                            "additional_charge_details",
-                            "payment_terms",
-                            "exclusions",
-                            "workmanship_terms",
-                        )
-                    },
-                    "materials_included": request.POST.get(
-                        "materials_included", "false"
+                payload = _offer_payload_from_post(request.POST)
+                try:
+                    client.post(
+                        f"/conversations/{conversation_id}/offers/",
+                        payload,
+                        idempotency_key=key,
                     )
-                    == "true",
-                    "scope": request.POST.get("scope", "").strip(),
-                    "notes": request.POST.get("notes", "").strip(),
-                    "scheduled_start": _offer_datetime_payload(
-                        request.POST.get("scheduled_start")
-                    ),
-                    "duration_value": request.POST.get("duration_value", "").strip(),
-                    "duration_unit": request.POST.get("duration_unit", "").strip(),
-                    "expires_at": _offer_datetime_payload(
-                        request.POST.get("expires_at")
-                    ),
-                }
-                client.post(
-                    f"/conversations/{conversation_id}/offers/",
-                    payload,
-                    idempotency_key=key,
-                )
-                messages.success(request, "Offer sent to the other participant.")
+                except APIError as exc:
+                    if exc.status_code not in (400, 409):
+                        raise
+                    # Keep the artisan on the page with every entry intact.
+                    offer_errors, offer_field_errors = _offer_error_context(exc)
+                    offer_draft = _offer_draft_context(request.POST)
+                    offer_form = "new"
+                else:
+                    messages.success(request, "Offer sent to the other participant.")
             elif action == "accept":
                 client.post(
                     f"/conversations/{conversation_id}/offers/{request.POST.get('offer_id')}/accept/",
@@ -3427,66 +3591,73 @@ def conversation_detail(request, conversation_id):
                     "Offer accepted. Your booking and payment step are now available.",
                 )
             elif action in {"decline", "revision"}:
+                note = request.POST.get("note", "").strip()[:5000]
                 client.post(
                     f"/conversations/{conversation_id}/offers/{request.POST.get('offer_id')}/decline/",
                     {"request_revision": action == "revision"},
                     idempotency_key=key,
                 )
+                if action == "revision" and note:
+                    # The customer explains in their own words what should change;
+                    # it lands in the chat so the artisan can edit the quote and
+                    # resend it as a new revision.
+                    client.post(
+                        f"/conversations/{conversation_id}/messages/",
+                        {"body": note},
+                        idempotency_key=new_idempotency_key("revision-note"),
+                    )
                 messages.success(
                     request,
                     (
-                        "A revised quote was requested."
+                        "Revision requested. The artisan will edit the quote and send it back."
                         if action == "revision"
                         else "Offer declined. No new price was accepted."
                     ),
                 )
             elif action == "counter":
-                counter_payload = {
-                    k: request.POST.get(k)
-                    for k in (
-                        "parent_offer_id",
-                        "labour_amount",
-                        "materials_amount",
-                        "total_amount",
-                        "scope",
-                        "notes",
-                        "scheduled_start",
-                        "duration_value",
-                        "duration_unit",
-                        "expires_at",
+                counter_payload = _offer_payload_from_post(request.POST)
+                counter_payload["parent_offer_id"] = request.POST.get(
+                    "parent_offer_id", ""
+                )
+                try:
+                    client.post(
+                        f"/conversations/{conversation_id}/offers/counter/",
+                        counter_payload,
+                        idempotency_key=key,
                     )
-                }
-                counter_payload["materials"] = _offer_materials_payload(
-                    request.POST.get("materials_json", "")
-                )
-                counter_payload.update(
-                    {
-                        k: request.POST.get(k, "0") or "0"
-                        for k in ("transport_amount", "additional_amount")
-                    }
-                )
-                counter_payload.update(
-                    {
-                        k: request.POST.get(k, "")
-                        for k in (
-                            "materials_details",
-                            "additional_charge_details",
-                            "payment_terms",
-                            "exclusions",
-                            "workmanship_terms",
-                        )
-                    }
-                )
-                for field in ("scheduled_start", "expires_at"):
-                    counter_payload[field] = _offer_datetime_payload(
-                        counter_payload[field]
-                    )
+                except APIError as exc:
+                    if exc.status_code not in (400, 409):
+                        raise
+                    offer_errors, offer_field_errors = _offer_error_context(exc)
+                    offer_draft = _offer_draft_context(request.POST)
+                    offer_form = "counter"
+                else:
+                    messages.success(request, "Counter offer sent.")
+            elif action == "offer_resend":
+                offer_id = request.POST.get("offer_id", "").strip()
+                if not offer_id:
+                    raise APIError(400, {"detail": "The agreement is missing."})
                 client.post(
-                    f"/conversations/{conversation_id}/offers/counter/",
-                    counter_payload,
+                    f"/conversations/{conversation_id}/offers/{offer_id}/resend/",
+                    {"scheduled_start": request.POST.get("scheduled_start", "").strip() or None},
                     idempotency_key=key,
                 )
-                messages.success(request, "Counter offer sent.")
+                messages.success(
+                    request,
+                    "Agreement resent. The customer can accept it again.",
+                )
+            elif action == "offer_renotify":
+                offer_id = request.POST.get("offer_id", "")
+                if not offer_id:
+                    raise APIError(400, {"detail": "The offer is missing."})
+                client.post(
+                    f"/conversations/{conversation_id}/offers/{offer_id}/renotify/",
+                    {},
+                    idempotency_key=key,
+                )
+                messages.success(
+                    request, "The other participant has been notified about this offer."
+                )
             elif action == "additional_order_propose":
                 _, current, _ = client.get(f"/conversations/{conversation_id}/")
                 booking_id = (current.get("booking") or {}).get("id")
@@ -3555,23 +3726,119 @@ def conversation_detail(request, conversation_id):
                         "Add-on payment is being prepared through the provider. It is not paid until server-side verification confirms escrow.",
                     )
                     return redirect("payment-detail", payment_id=payment_id)
-            elif action == "pay":
-                result_status, payment_payload, _ = client.post(
-                    f"/conversations/{conversation_id}/payment/initialize/",
-                    {},
-                    idempotency_key=key,
+            elif action in {"pay", "pay_status"}:
+                payment_id = request.POST.get("payment_id", "").strip()
+                if action == "pay" or not payment_id:
+                    _, payment_payload, _ = client.post(
+                        f"/conversations/{conversation_id}/payment/initialize/",
+                        {},
+                        idempotency_key=key,
+                    )
+                    payment_id = (
+                        str(payment_payload.get("payment_id") or "")
+                        if isinstance(payment_payload, dict)
+                        else ""
+                    )
+                else:
+                    payment_payload = {}
+                _remember_payment_return(request, conversation_id)
+                # The escrow payment is completed here, in the chat: straight to
+                # the provider checkout, never through a booking or payment page.
+                checkout_url = (
+                    _checkout_url_for(client, payment_id, payment_payload)
+                    if payment_id
+                    else ""
                 )
-                payment_id = (
-                    payment_payload.get("payment_id")
-                    if isinstance(payment_payload, dict)
-                    else None
-                )
+                if not checkout_url and payment_id and action == "pay_status":
+                    # The stored link expired, or predates the card/bank-transfer
+                    # rule, so the API hides it. Ask for a fresh checkout instead
+                    # of leaving the payer on a dead provider page.
+                    _, renewed, _ = client.post(
+                        f"/conversations/{conversation_id}/payment/initialize/",
+                        {},
+                        idempotency_key=f"{key}-renew",
+                    )
+                    checkout_url = _checkout_url_for(client, payment_id, renewed)
+                if checkout_url:
+                    return redirect(checkout_url)
+                # No usable link: say why, in the provider's own words, instead of
+                # leaving the payer on a spinner with nothing to act on.
+                reason = ""
                 if payment_id:
+                    try:
+                        _, snapshot, _ = client.get(
+                            replace_path("/payments/{payment_id}/", payment_id=payment_id)
+                        )
+                        reason = str((snapshot or {}).get("failure_reason") or "").strip()
+                    except APIError:
+                        reason = ""
+                if reason:
                     messages.info(
                         request,
-                        "Payment initialization has started securely. Continue from the payment page.",
+                        f"The payment provider refused this checkout: {reason} "
+                        "Nothing has been charged. Fix that, then tap “Check again”.",
                     )
-                    return redirect("payment-detail", payment_id=payment_id)
+                else:
+                    messages.info(
+                        request,
+                        "Preparing the secure payment link. Tap “Check again” in a moment — nothing has been charged.",
+                    )
+            elif action in {"pay_transfer", "pay_transfer_check"}:
+                payment_id = request.POST.get("payment_id", "").strip()
+                if action == "pay_transfer" and not payment_id:
+                    _, payment_payload, _ = client.post(
+                        f"/conversations/{conversation_id}/payment/initialize/",
+                        {},
+                        idempotency_key=f"{key}-transfer",
+                    )
+                    payment_id = str(
+                        (payment_payload or {}).get("payment_id") or ""
+                    ) if isinstance(payment_payload, dict) else ""
+                if not payment_id:
+                    messages.info(
+                        request,
+                        "The payment is not ready yet. Nothing has been charged — try again in a moment.",
+                    )
+                    return redirect(
+                        "conversation-detail", conversation_id=conversation_id
+                    )
+                try:
+                    if action == "pay_transfer":
+                        # Ask the provider for a dedicated account and show it here.
+                        client.post(
+                            replace_path(
+                                "/payments/{payment_id}/bank-transfer/",
+                                payment_id=payment_id,
+                            ),
+                            {},
+                            idempotency_key=f"{key}-account",
+                        )
+                    else:
+                        client.post(
+                            replace_path(
+                                "/payments/{payment_id}/bank-transfer/verify/",
+                                payment_id=payment_id,
+                            ),
+                            {},
+                            idempotency_key=f"{key}-confirm",
+                        )
+                        messages.info(
+                            request,
+                            "Checking that transfer with your bank now. This chat updates by itself — nothing more to tap.",
+                        )
+                except APIError as exc:
+                    handle_api_error(request, exc)
+                    return redirect(
+                        "conversation-detail", conversation_id=conversation_id
+                    )
+                _remember_payment_return(request, conversation_id)
+                return redirect(
+                    reverse(
+                        "conversation-detail",
+                        kwargs={"conversation_id": conversation_id},
+                    )
+                    + f"?transfer={payment_id}"
+                )
             elif action in {
                 "start_booking",
                 "complete",
@@ -3652,8 +3919,29 @@ def conversation_detail(request, conversation_id):
                 )
                 if request_wants_json(request):
                     return JsonResponse(read_state)
-            return redirect("conversation-detail", conversation_id=conversation_id)
+            if offer_errors:
+                messages.error(
+                    request,
+                    "The offer was not sent. Nothing was booked and no payment was taken.",
+                )
+            else:
+                return redirect(
+                    "conversation-detail", conversation_id=conversation_id
+                )
         _, conversation, _ = client.get(f"/conversations/{conversation_id}/")
+        journey = conversation.get("journey")
+        if not isinstance(journey, list) or not journey:
+            journey = _fallback_phase_steps(conversation)
+            conversation = dict(conversation)
+            conversation["journey"] = journey
+        current_phase = next(
+            (step for step in journey if isinstance(step, dict) and step.get("current")),
+            None,
+        ) or {
+            "step": 1,
+            "title": str(conversation.get("state") or "Request & Chat").replace("_", " ").title(),
+            "description": "Describe the work and agree the request details.",
+        }
         active_offer = conversation.get("active_offer")
         if isinstance(active_offer, dict):
             active_offer = dict(active_offer)
@@ -3671,7 +3959,97 @@ def conversation_detail(request, conversation_id):
                 f"/conversations/{conversation_id}/offers/", params={"limit": "8"}
             )
             offer_history = extract_items(offers_payload)
-        return page(
+        active_offer_json = conversation.get("active_offer") or {}
+
+        # The chat owns the escrow payment: read the live payment so the strip can
+        # offer the provider checkout directly, without leaving this page.
+        payment_checkout_url = ""
+        payment_id = ""
+        bank_transfer = {}
+        request_is_draft = _request_still_being_written(conversation)
+        payment_state = conversation.get("payment") or {}
+        payment_paid = (
+            str(payment_state.get("status") or "").upper() in PAID_PAYMENT_STATUSES
+        )
+        if isinstance(payment_state, dict) and payment_state.get("id"):
+            payment_id = str(payment_state["id"])
+            if str(payment_state.get("status") or "").upper() == "PAYMENT_PENDING":
+                live_payment = _payment_snapshot(client, payment_id)
+                payment_checkout_url = _live_checkout_url(live_payment)
+                # The provider hands us a dedicated account number; the payer
+                # copies it from this page instead of opening the hosted page.
+                if isinstance(live_payment.get("bank_transfer"), dict):
+                    bank_transfer = live_payment["bank_transfer"]
+
+        # After a cancellation the artisan can put the same agreement back in
+        # front of the customer, either as-is or edited first.
+        resend_offer_id = ""
+        viewer_is_artisan = conversation.get("viewer_role") == "artisan"
+        booking_status = str((conversation.get("booking") or {}).get("status") or "")
+        if viewer_is_artisan and booking_status == "CANCELLED":
+            accepted = [
+                item
+                for item in offer_history
+                if isinstance(item, dict) and item.get("status") == "ACCEPTED"
+            ]
+            if accepted:
+                resend_offer_id = str(accepted[0].get("id") or "")
+        requested_resend = (request.GET.get("resend") or "").strip()
+        if requested_resend and viewer_is_artisan:
+            source = next(
+                (
+                    item
+                    for item in offer_history
+                    if isinstance(item, dict) and str(item.get("id")) == requested_resend
+                ),
+                None,
+            )
+            if source:
+                offer_draft = {
+                    "labour_amount": str(source.get("labour_amount") or ""),
+                    "materials_json": json.dumps(
+                        [
+                            {
+                                "name": row.get("name") or "",
+                                "quantity": str(row.get("quantity") or ""),
+                                "unit": row.get("unit") or "",
+                                "unit_price": str(row.get("unit_price") or ""),
+                            }
+                            for row in (source.get("materials") or [])
+                        ]
+                    ),
+                    "materials_amount": str(source.get("materials_amount") or "0"),
+                    "total_amount": str(source.get("total_amount") or ""),
+                    "scheduled_start": _conversation_local_datetime(
+                        source.get("scheduled_start")
+                    ),
+                    "duration_value": str(source.get("duration_value") or ""),
+                    "duration_unit": source.get("duration_unit") or "DAYS",
+                    "transport_amount": str(source.get("transport_amount") or "0"),
+                    "additional_amount": str(source.get("additional_amount") or "0"),
+                    "additional_charge_details": source.get(
+                        "additional_charge_details"
+                    )
+                    or "",
+                    "materials_included": bool(source.get("materials_included")),
+                }
+                offer_form = "new"
+
+        counter_prefill = {
+            "labour_amount": str(active_offer_json.get("labour_amount") or ""),
+            "materials": active_offer_json.get("materials") or [],
+            "transport_amount": str(active_offer_json.get("transport_amount") or "0"),
+            "additional_amount": str(active_offer_json.get("additional_amount") or "0"),
+            "additional_charge_details": active_offer_json.get(
+                "additional_charge_details"
+            )
+            or "",
+            "scheduled_start": active_offer_json.get("scheduled_start_local") or "",
+            "duration_value": str(active_offer_json.get("duration_value") or ""),
+            "duration_unit": active_offer_json.get("duration_unit") or "DAYS",
+            "materials_included": bool(active_offer_json.get("materials_included")),
+        }
+        response = page(
             request,
             "conversations/detail.html",
             conversation=conversation,
@@ -3682,13 +4060,41 @@ def conversation_detail(request, conversation_id):
             role=conversation.get("viewer_role"),
             nav_role=current_role(request),
             dispute_message_key=new_idempotency_key("conversation-dispute-message"),
-            include_geography=(
-                conversation.get("conversation_type") == "SERVICE"
-                and conversation.get("viewer_role") == "customer"
-                and not conversation.get("service_request")
+            current_phase=current_phase,
+            request_brief=_conversation_request_summary(conversation),
+            can_edit_request=(
+                conversation.get("viewer_role") == "customer"
+                and conversation.get("conversation_type") == "SERVICE"
+                and not conversation.get("booking")
             ),
-            today_iso=timezone.localdate().isoformat(),
+            offer_errors=offer_errors if request.method == "POST" else [],
+            offer_field_errors=offer_field_errors,
+            offer_draft=offer_draft,
+            offer_form=offer_form,
+            offer_action_key=new_idempotency_key("conversation-offer"),
+            resend_offer_id=resend_offer_id,
+            resend_mode=bool(request.GET.get("resend")),
+            payment_id=payment_id,
+            payment_checkout_url=payment_checkout_url,
+            bank_transfer=bank_transfer,
+            payment_paid=payment_paid,
+            request_is_draft=request_is_draft,
+            payment_status_url=(
+                reverse("payment-status", kwargs={"payment_id": payment_id})
+                if payment_id
+                else ""
+            ),
+            offer_counter_key=new_idempotency_key("conversation-counter"),
+            counter_prefill=json.dumps(counter_prefill).replace("'", "&#x27;"),
+            duration_unit_options=[
+                ("HOURS", "Hours"),
+                ("DAYS", "Days"),
+                ("WEEKS", "Weeks"),
+            ],
         )
+        if offer_errors:
+            response.status_code = 400
+        return response
     except APIError as exc:
         handle_api_error(request, exc)
         if request.method == "POST" and exc.status_code not in (401, 403, 404):
@@ -3933,13 +4339,13 @@ def service_requests(request):
             _withdraw_service_request(request, client, request_id)
         return redirect("service-requests")
     if request.method == "POST":
-        request.session[PENDING_REQUEST_DRAFT_SESSION_KEY] = (
-            _safe_service_request_draft(request.POST)
+        request.session[PENDING_REQUEST_FORM_SESSION_KEY] = (
+            _safe_service_request_form_values(request.POST)
         )
         request.session.modified = True
         role = current_role(request)
         if role == "customer":
-            action = {"kind": "service_request_draft"}
+            action = {"kind": "service_request_form"}
             completion = _ensure_action_profile_complete(
                 request,
                 action,
@@ -3968,20 +4374,20 @@ def service_requests(request):
                         payload,
                         idempotency_key=new_idempotency_key("service-request-create"),
                     )
-                    _clear_pending_action(request, clear_draft=True)
+                    _clear_pending_action(request, clear_form_values=True)
                     messages.success(request, "Your service request was created.")
                     return redirect("service-request-detail", pk=item["id"])
                 except APIError as exc:
                     handle_api_error(request, exc)
     else:
-        draft = (
-            request.session.get(PENDING_REQUEST_DRAFT_SESSION_KEY)
-            if request.GET.get("resume") == "draft"
+        form_values = (
+            request.session.get(PENDING_REQUEST_FORM_SESSION_KEY)
+            if request.GET.get("resume") == "form"
             else None
         )
-        if isinstance(draft, dict):
+        if isinstance(form_values, dict):
             form = _service_request_form(
-                request, catalog, initial=_safe_service_request_draft(draft)
+                request, catalog, initial=_safe_service_request_form_values(form_values)
             )
             messages.info(
                 request,
@@ -4098,10 +4504,10 @@ def service_request_detail(request, pk, focus_responders=False):
         "location_area_filter": item_location.get("area") or "",
         "preferred_date": item.get("preferred_date") or "",
     }
-    if request.method == "GET" and request.GET.get("resume") == "draft":
-        saved_draft = request.session.get(PENDING_REQUEST_UPDATE_DRAFT_SESSION_KEY)
-        if isinstance(saved_draft, dict):
-            initial.update(saved_draft)
+    if request.method == "GET" and request.GET.get("resume") == "form":
+        saved_form_values = request.session.get(PENDING_REQUEST_UPDATE_FORM_SESSION_KEY)
+        if isinstance(saved_form_values, dict):
+            initial.update(saved_form_values)
     action = request.POST.get("action", "update") if request.method == "POST" else ""
     if request.method == "POST" and _request_action(request) == "delete":
         _withdraw_service_request(request, client, pk)
@@ -4150,15 +4556,15 @@ def service_request_detail(request, pk, focus_responders=False):
     elif request.method == "POST":
         role = current_role(request)
         if role == "customer":
-            request.session[PENDING_REQUEST_UPDATE_DRAFT_SESSION_KEY] = (
-                _safe_service_request_draft(request.POST)
+            request.session[PENDING_REQUEST_UPDATE_FORM_SESSION_KEY] = (
+                _safe_service_request_form_values(request.POST)
             )
             request.session.modified = True
             completion = _ensure_action_profile_complete(
                 request,
                 {"kind": "service_request_update", "service_request_id": str(pk)},
                 role=role,
-                destination=f"{reverse('service-request-detail', kwargs={'pk': pk})}?resume=draft",
+                destination=f"{reverse('service-request-detail', kwargs={'pk': pk})}?resume=form",
             )
             if completion:
                 return completion
@@ -4177,7 +4583,7 @@ def service_request_detail(request, pk, focus_responders=False):
             else:
                 try:
                     _, item, _ = client.patch(path, payload)
-                    request.session.pop(PENDING_REQUEST_UPDATE_DRAFT_SESSION_KEY, None)
+                    request.session.pop(PENDING_REQUEST_UPDATE_FORM_SESSION_KEY, None)
                     messages.success(request, "Service request updated.")
                     return redirect("service-request-detail", pk=pk)
                 except APIError as exc:
@@ -4638,25 +5044,148 @@ def bookings(request):
     except APIError as exc:
         handle_api_error(request, exc)
         items = []
+    for item in items:
+        item["actions"] = _booking_actions(item)
+        item["can_cancel"] = any(
+            action.get("code") == "CANCEL_BOOKING" for action in item["actions"]
+        )
     return page(
         request, "bookings/list.html", bookings=items, role=current_role(request)
     )
 
 
+BOOKING_ACTION_ROUTES = {
+    "ACCEPT_BOOKING": "booking-accept",
+    "REJECT_BOOKING": "booking-reject",
+    "CANCEL_BOOKING": "booking-cancel",
+    "START_WORK": "booking-start",
+    "REQUEST_COMPLETION": "booking-complete",
+    "CONFIRM_COMPLETION": "booking-confirm",
+    "DISPUTE_BOOKING": "booking-dispute",
+    "VIEW_HISTORY": "booking-history",
+}
+
+
+def _booking_actions(booking):
+    """Turn the server's available_actions into links the template can render.
+
+    The list comes from the API, which is also what enforces it, so a rendered
+    button and an allowed action can never disagree.
+    """
+    actions = []
+    for item in booking.get("available_actions") or []:
+        if not isinstance(item, dict):
+            continue
+        entry = dict(item)
+        code = entry.get("code")
+        route = BOOKING_ACTION_ROUTES.get(code)
+        if route:
+            entry["url"] = reverse(route, kwargs={"pk": booking.get("id")})
+        elif code == "PAY_BOOKING":
+            entry["url"] = reverse(
+                "payment-initialize", kwargs={"booking_id": booking.get("id")}
+            )
+        elif code == "OPEN_CONVERSATION" and booking.get("conversation_id"):
+            entry["url"] = reverse(
+                "conversation-detail",
+                kwargs={"conversation_id": booking["conversation_id"]},
+            )
+        else:
+            entry["url"] = ""
+        actions.append(entry)
+    return actions
+
+
+def _booking_service_summary(client, booking):
+    """Service and schedule context from the linked request, when available."""
+    request_id = booking.get("request_id")
+    if not request_id:
+        return {}
+    try:
+        _, request_payload, _ = client.get(
+            replace_path("/services/requests/{pk}/", pk=request_id)
+        )
+    except APIError:
+        return {}
+    if not isinstance(request_payload, dict):
+        return {}
+    category = request_payload.get("category")
+    location = request_payload.get("location")
+    return {
+        "service": (
+            request_payload.get("service_name")
+            or (category.get("name") if isinstance(category, dict) else category)
+            or ""
+        ),
+        "location": (
+            location.get("area")
+            if isinstance(location, dict)
+            else (request_payload.get("location_label") or "")
+        ),
+        "description": request_payload.get("description") or "",
+        "preferred_date": request_payload.get("preferred_date") or "",
+    }
+
+
 @api_guard
 def booking_detail(request, pk):
+    client = APIClient(request)
     try:
-        _, item, _ = APIClient(request).get(replace_path("/booking/{pk}/", pk=pk))
+        _, item, _ = client.get(replace_path("/booking/{pk}/", pk=pk))
     except APIError as exc:
         handle_api_error(request, exc)
         return redirect("bookings")
-    if item.get("viewer_role") == "customer" and item.get("conversation_id"):
-        return redirect("conversation-detail", conversation_id=item["conversation_id"])
     return page(
         request,
         "bookings/detail.html",
         booking=item,
+        booking_actions=_booking_actions(item),
+        service_summary=_booking_service_summary(client, item),
         role=item.get("viewer_role") or current_role(request),
+        nav_role=current_role(request),
+    )
+
+
+@api_guard
+def customer_bookings(request):
+    """The customer's own booking dashboard: list, price, schedule, next action."""
+    client = APIClient(request)
+    try:
+        _, payload, _ = client.get("/booking/", params={"limit": "50"})
+        items = extract_items(payload)
+    except APIError as exc:
+        handle_api_error(request, exc)
+        items = []
+    # The API scopes the list to the signed-in user. `viewer_role` only separates
+    # dual-role accounts; an older payload without it must not empty the page.
+    if any(item.get("viewer_role") for item in items):
+        mine = [
+            item
+            for item in items
+            if item.get("viewer_role") in (None, "customer")
+        ]
+    else:
+        mine = items
+    for item in mine:
+        item["actions"] = _booking_actions(item)
+        item["primary_action"] = next(
+            (
+                action
+                for action in item["actions"]
+                if action.get("variant") in {"primary"}
+                and action.get("code")
+                in {"PAY_BOOKING", "CONFIRM_COMPLETION"}
+            ),
+            None,
+        )
+        item["can_cancel"] = any(
+            action.get("code") == "CANCEL_BOOKING" for action in item["actions"]
+        )
+    return page(
+        request,
+        "customer/bookings.html",
+        bookings=mine,
+        role="customer",
         nav_role=current_role(request),
     )
 
@@ -4669,6 +5198,8 @@ def _booking_action(
     redirect_name="booking-detail",
     template="bookings/action.html",
     title="Booking action",
+    cancel_notice="",
+    confirm_message="",
     **url_kwargs,
 ):
     form = form_cls(request.POST or None) if form_cls else None
@@ -4680,14 +5211,31 @@ def _booking_action(
                 data,
                 idempotency_key=new_idempotency_key("booking-action"),
             )
-            messages.success(request, payload_message(payload) or "Booking updated.")
+            notices = []
+            payment_info = payload.get("payment") if isinstance(payload, dict) else None
+            if isinstance(payment_info, dict) and payment_info.get("message"):
+                notices.append(payment_info["message"])
+            messages.success(
+                request,
+                payload_message(payload) or "Booking updated.",
+            )
+            for notice in notices:
+                messages.info(request, notice)
             return redirect(
                 redirect_name,
                 **({"pk": pk} if redirect_name == "booking-detail" else url_kwargs),
             )
         except APIError as exc:
             handle_api_error(request, exc)
-    return page(request, template, form=form, title=title, pk=pk)
+    return page(
+        request,
+        template,
+        form=form,
+        title=title,
+        pk=pk,
+        cancel_notice=cancel_notice,
+        confirm_message=confirm_message,
+    )
 
 
 @api_guard
@@ -4704,8 +5252,36 @@ def booking_reject(request, pk):
 
 @api_guard
 def booking_cancel(request, pk):
+    """Cancel an accepted-but-unpaid booking.
+
+    The confirmation states plainly that no money was taken, because an unpaid
+    payment link is voided rather than refunded.
+    """
+    client = APIClient(request)
+    payment_line = "No payment has been taken from your account."
+    try:
+        _, booking, _ = client.get(replace_path("/booking/{pk}/", pk=pk))
+    except APIError as exc:
+        handle_api_error(request, exc)
+        return redirect("bookings")
+    actions = {item.get("code") for item in booking.get("available_actions") or []}
+    if "CANCEL_BOOKING" not in actions:
+        messages.error(
+            request,
+            "This booking cannot be cancelled from here. If money is held in escrow, use the payment or dispute process.",
+        )
+        return redirect("booking-detail", pk=pk)
     return _booking_action(
-        request, pk, "/booking/{pk}/cancel/", CancelForm, title="Cancel booking"
+        request,
+        pk,
+        "/booking/{pk}/cancel/",
+        CancelForm,
+        title="Cancel booking",
+        cancel_notice=payment_line,
+        confirm_message=(
+            "Cancel this booking? No payment was taken from your account. "
+            "Any payment link for it stops working immediately."
+        ),
     )
 
 
@@ -4846,14 +5422,228 @@ def booking_history(request, pk):
     return page(request, "bookings/history.html", history=extract_items(payload), pk=pk)
 
 
+@api_guard
+def booking_activity(request, pk):
+    """What is actually going on with one booking, read from the records.
+
+    The chat can only show the next action; when the provider is slow or a link
+    has gone stale there is nothing honest for it to say. This page answers the
+    question directly: the booking state, the escrow payment, whether the
+    checkout can be used right now, and the trail of what happened.
+    """
+    client = APIClient(request)
+    try:
+        _, booking, _ = client.get(replace_path("/booking/{pk}/", pk=pk))
+    except APIError as exc:
+        handle_api_error(request, exc)
+        return redirect("bookings")
+    if not isinstance(booking, dict):
+        booking = {}
+
+    history = []
+    try:
+        _, payload, _ = client.get(replace_path("/booking/{pk}/history/", pk=pk))
+        history = extract_items(payload)
+    except APIError:
+        history = []
+
+    conversation = {}
+    payment = {}
+    events = []
+    conversation_id = str(booking.get("conversation_id") or "")
+    if conversation_id:
+        try:
+            _, conversation, _ = client.get(f"/conversations/{conversation_id}/")
+        except APIError:
+            conversation = {}
+        summary = (conversation or {}).get("payment") if isinstance(conversation, dict) else {}
+        if isinstance(summary, dict) and summary.get("id"):
+            payment = _payment_snapshot(client, summary["id"]) or dict(summary)
+            for field in ("total_amount", "status"):
+                payment.setdefault(field, summary.get(field))
+        try:
+            _, messages, _ = client.get(
+                f"/conversations/{conversation_id}/messages/", params={"limit": "60"}
+            )
+            events = [
+                item
+                for item in extract_items(messages)
+                if isinstance(item, dict) and item.get("message_type") == "SYSTEM"
+            ]
+        except APIError:
+            events = []
+
+    checkout = payment.get("checkout") if isinstance(payment.get("checkout"), dict) else {}
+    checkout_url = _live_checkout_url(payment)
+
+    trail = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        trail.append(
+            {
+                "at": str(item.get("created_at") or ""),
+                "title": str(item.get("status") or "").replace("_", " ").title() or "Status changed",
+                "detail": str(item.get("notes") or ""),
+                "actor": str(item.get("changed_by") or ""),
+                "kind": "booking",
+            }
+        )
+    for item in events:
+        body = str(item.get("body") or "").split("Next steps:")[0].strip()
+        if not body:
+            continue
+        trail.append(
+            {
+                "at": str(item.get("created_at") or ""),
+                "title": body,
+                "detail": "",
+                "actor": "",
+                "kind": "conversation",
+            }
+        )
+    trail.sort(key=lambda entry: entry["at"])
+
+    booking_status = str(booking.get("status") or "").upper()
+    payment_status = str(payment.get("status") or "").upper()
+    checkout_state = str(checkout.get("state") or "").upper()
+    if payment_status == "HELD":
+        next_step = "The money is held in escrow. The artisan can start the work, and payout is released only after you confirm completion."
+    elif payment_status == "PAYMENT_PENDING" and checkout_url:
+        next_step = "Waiting for you to pay. The secure checkout below accepts card or bank transfer; nothing is held until the provider confirms it."
+    elif payment_status == "PAYMENT_PENDING":
+        next_step = "A payment link is being prepared with the provider. This page asks for a fresh one every few seconds; nothing has been charged."
+    elif payment_status == "FAILED":
+        reason = str(payment.get("failure_reason") or "").strip()
+        next_step = (
+            "The provider refused to create a checkout"
+            + (f": {reason}" if reason else ".")
+            + " Nothing has been charged. Ask for a new link to try again."
+        )
+    elif booking_status in {"CANCELLED", "REJECTED"}:
+        next_step = "This booking was closed before payment. No money moved."
+    elif booking_status == "ACCEPTED":
+        next_step = "The agreement is accepted. The escrow payment is the next step."
+    else:
+        next_step = "Follow the conversation for the next step; every action here is recorded."
+
+    return page(
+        request,
+        "bookings/activity.html",
+        booking=booking,
+        booking_history=trail,
+        payment=payment,
+        checkout=checkout,
+        checkout_url=checkout_url,
+        conversation_id=conversation_id,
+        next_step=next_step,
+        role=booking.get("viewer_role") or current_role(request),
+        nav_role=current_role(request),
+    )
+
+
 # ---------------- Payments ----------------
+
+PAYMENT_SESSION_CONVERSATION_KEY = "payment_return_conversation"
+
+
+def _safe_checkout_url(value):
+    """Only a real Flutterwave https checkout may be used for a redirect."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "https" and host.endswith(".flutterwave.com"):
+        return text
+    return ""
+
+
+def _live_checkout_url(payment):
+    """A provider link the payer may open right now, or nothing.
+
+    The API reports the link's state (`LIVE`, `EXPIRED`, `OLD_METHODS`,
+    `NOT_MINTED`). A link minted before checkout was limited to card and bank
+    transfer, or one past the provider countdown, must not be offered: the payer
+    would land on a page with methods we no longer allow. Callers that get
+    nothing back ask for a fresh mint instead. When the API is an older build and
+    reports no state at all, the URL is passed through so a mixed deployment can
+    still take payment.
+    """
+    if not isinstance(payment, dict):
+        return ""
+    checkout = payment.get("checkout")
+    if isinstance(checkout, dict) and checkout:
+        if str(checkout.get("state") or "").upper() != "LIVE":
+            return ""
+    return _safe_checkout_url(payment.get("authorization_url"))
+
+
+def _payment_snapshot(client, payment_id):
+    try:
+        _, payment, _ = client.get(
+            replace_path("/payments/{payment_id}/", payment_id=payment_id)
+        )
+    except APIError:
+        return {}
+    return payment if isinstance(payment, dict) else {}
+
+
+def _checkout_url_for(client, payment_id, payload=None, tries=13, pause=0.7):
+    """Return the provider checkout URL as soon as the queued init has it.
+
+    Initialization is asynchronous on the server, so the first response usually
+    carries only `payment_id`. We poll our own payment record briefly instead of
+    sending the payer to an intermediate page.
+    """
+    if isinstance(payload, dict):
+        url = _live_checkout_url(payload)
+        if url:
+            return url
+    for attempt in range(max(1, tries)):
+        payment = _payment_snapshot(client, payment_id)
+        url = _live_checkout_url(payment)
+        if url:
+            return url
+        if attempt < tries - 1:
+            time.sleep(pause)
+    return ""
+
+
+def _remember_payment_return(request, conversation_id):
+    if conversation_id:
+        request.session[PAYMENT_SESSION_CONVERSATION_KEY] = str(conversation_id)
+
+
+def _conversation_for_payment(client, payment, request=None):
+    """The chat a payment belongs to, so the payer never lands on a dead page."""
+    conversation_id = str(payment.get("conversation_id") or "").strip()
+    if not conversation_id and request is not None:
+        conversation_id = str(
+            request.session.get(PAYMENT_SESSION_CONVERSATION_KEY) or ""
+        ).strip()
+    if not conversation_id:
+        booking_id = str(payment.get("booking") or "").strip()
+        if booking_id:
+            try:
+                _, booking, _ = client.get(
+                    replace_path("/booking/{pk}/", pk=booking_id)
+                )
+            except APIError:
+                booking = {}
+            if isinstance(booking, dict):
+                conversation_id = str(booking.get("conversation_id") or "").strip()
+    return conversation_id
+
+
 
 
 def payment_initialize(request, booking_id):
     if request.method != "POST":
         return page(request, "payments/initialize.html", booking_id=booking_id)
+    client = APIClient(request)
     try:
-        _, payload, _ = APIClient(request).post(
+        _, payload, _ = client.post(
             replace_path(
                 "/payments/booking/{booking_id}/initialize/", booking_id=booking_id
             ),
@@ -4862,20 +5652,246 @@ def payment_initialize(request, booking_id):
     except APIError as exc:
         handle_api_error(request, exc)
         return redirect("booking-detail", pk=booking_id)
-    authorization_url = (
-        payload.get("authorization_url") if isinstance(payload, dict) else None
+    payment_id = (
+        str(payload.get("payment_id") or "") if isinstance(payload, dict) else ""
     )
-    if authorization_url:
-        parsed = urlparse(str(authorization_url))
-        allowed = parsed.scheme == "https" and (parsed.hostname or "").lower().endswith(
-            ".flutterwave.com"
+    checkout_url = (
+        _checkout_url_for(client, payment_id, payload) if payment_id else ""
+    )
+    payment = _payment_snapshot(client, payment_id) if payment_id else {}
+    conversation_id = _conversation_for_payment(client, payment, request)
+    _remember_payment_return(request, conversation_id)
+    if checkout_url:
+        return redirect(checkout_url)
+    messages.info(
+        request,
+        "The secure payment link is still being prepared. Nothing has been charged. "
+        "This chat opens it by itself the moment the provider returns it — no need to tap again.",
+    )
+    if conversation_id:
+        return redirect("conversation-detail", conversation_id=conversation_id)
+    return redirect("booking-detail", pk=booking_id)
+
+
+@require_GET
+def payment_status(request, payment_id):
+    """Tiny JSON status feed the chat polls while a payment is in flight."""
+    client = APIClient(request)
+    payment = _payment_snapshot(client, payment_id)
+    if not payment:
+        return JsonResponse({"detail": "Payment not found."}, status=404)
+    payload = {
+        "status": str(payment.get("status") or ""),
+        "authorization_url": _live_checkout_url(payment),
+        "conversation_id": _conversation_for_payment(client, payment, request),
+    }
+    return JsonResponse(payload)
+
+
+@require_GET
+def payment_provider_return(request):
+    """Where Flutterwave lands when only the web host has a public tunnel.
+
+    The provider appends `tx_ref` and `transaction_id` but knows nothing about
+    our payment ids. This route hands both to the API (over localhost, server to
+    server), takes back the payment it matched, and forwards the browser into the
+    normal return page. Without it a single-tunnel setup would 404 after paying.
+    """
+    tx_ref = str(request.GET.get("tx_ref") or "").strip()
+    transaction_id = str(request.GET.get("transaction_id") or "").strip()
+    if not tx_ref or not transaction_id:
+        messages.info(
+            request,
+            "The payment provider did not say which payment it was. Nothing has been "
+            "charged twice — open the booking to see its exact state.",
         )
-        if allowed:
-            return redirect(authorization_url)
-    messages.success(
-        request, "Payment initialized. Continue from the payment details page."
+        return redirect("bookings")
+
+    client = APIClient(request)
+    try:
+        _, payload, _ = client.get(
+            "/payments/flutterwave/callback/",
+            params={"tx_ref": tx_ref, "transaction_id": transaction_id},
+        )
+    except APIError as exc:
+        handle_api_error(request, exc)
+        return redirect("bookings")
+
+    payment_id = str((payload or {}).get("payment_id") or "") if isinstance(payload, dict) else ""
+    if not payment_id:
+        messages.info(
+            request,
+            "That callback does not belong to a booking payment. If money left your "
+            "account, support can trace it with the provider reference — nothing was "
+            "charged twice.",
+        )
+        return redirect("bookings")
+    payment = _payment_snapshot(client, payment_id)
+    _remember_payment_return(request, _conversation_for_payment(client, payment, request))
+    return redirect("payment-return", payment_id=payment_id)
+
+
+@csrf_exempt
+@require_POST
+def payment_webhook_proxy(request):
+    """Forward Flutterwave's webhook to the API when only this host is public.
+
+    The API validates `flutterwave-signature` / `verif-hash` itself, so this route
+    is a pipe, not a gate: it only relays the raw body and those two headers to
+    the fixed internal address, and it caps the size.
+    """
+    body = request.body or b""
+    if len(body) > 1_000_000:
+        return HttpResponse(status=413)
+
+    headers = {"Content-Type": "application/json"}
+    for name in ("flutterwave-signature", "verif-hash"):
+        value = request.headers.get(name)
+        if value:
+            headers[name] = value
+
+    import requests as http
+
+    target = f"{settings.ARTISAN_API_ROOT_URL.rstrip('/')}/api/v1/payments/flutterwave/webhook/"
+    try:
+        upstream = http.post(target, data=body, headers=headers, timeout=15)
+    except Exception:
+        # The provider retries failed webhooks; never acknowledge a delivery we
+        # could not hand on.
+        return HttpResponse(status=502)
+    return HttpResponse(status=upstream.status_code)
+
+
+@require_GET
+def payment_return(request, payment_id):
+    """Where the provider drops the payer: back into the chat, never a bare page."""
+    client = APIClient(request)
+    payment = _payment_snapshot(client, payment_id)
+    if not payment:
+        messages.info(request, "That payment could not be found.")
+        return redirect("bookings")
+    # If the provider sent the payer straight here, forward the identifiers so the
+    # API still queues its own verification (the same job the callback does).
+    tx_ref = str(request.GET.get("tx_ref") or "").strip()
+    transaction_id = str(request.GET.get("transaction_id") or "").strip()
+    if tx_ref and transaction_id:
+        try:
+            client.get(
+                "/payments/flutterwave/callback/",
+                params={"tx_ref": tx_ref, "transaction_id": transaction_id},
+            )
+        except APIError:
+            pass
+        payment = _payment_snapshot(client, payment_id) or payment
+
+    status = str(payment.get("status") or "").upper()
+    conversation_id = _conversation_for_payment(client, payment, request)
+    if status == "HELD":
+        messages.success(
+            request,
+            "Payment secured in escrow. The artisan can see it in this chat and start the work.",
+        )
+    elif status == "PAYMENT_PENDING":
+        messages.info(
+            request,
+            "We are confirming this payment with the provider. This chat updates as soon as it clears.",
+        )
+    elif status == "CANCELLED":
+        messages.info(request, "That payment was cancelled with the booking. No money was taken.")
+    elif status == "FAILED":
+        messages.error(request, "The provider did not confirm this payment. You can try again here.")
+    else:
+        messages.info(request, f"Payment status: {status.title() or 'unknown'}.")
+    if conversation_id:
+        return redirect("conversation-detail", conversation_id=conversation_id)
+    return redirect("payment-detail", payment_id=payment_id)
+
+
+PAID_PAYMENT_STATUSES = {
+    "HELD",
+    "DISPUTED",
+    "RELEASE_PENDING",
+    "RELEASED",
+    "REFUND_PENDING",
+    "REFUNDED",
+}
+
+
+def _payment_with_receipt(client, payment_id):
+    """Fetch one payment and the receipt the API built for this viewer.
+
+    The API decides who may see it — the record is scoped to the payer and the
+    artisan in the query, and `receipt` is empty when the money has not arrived —
+    so this helper only has to stop the page from pretending otherwise.
+    """
+    _, payment, _ = client.get(
+        replace_path("/payments/{payment_id}/", payment_id=payment_id)
     )
-    return redirect("payment-detail", payment_id=payload.get("payment_id"))
+    if not isinstance(payment, dict):
+        return {}, {}
+    receipt = payment.get("receipt") if isinstance(payment.get("receipt"), dict) else {}
+    return payment, receipt
+
+
+@api_guard
+def payment_receipt(request, payment_id):
+    """The receipt a payer keeps after a successful payment."""
+    client = APIClient(request)
+    try:
+        payment, receipt = _payment_with_receipt(client, payment_id)
+    except APIError as exc:
+        handle_api_error(request, exc)
+        return redirect("bookings")
+    if not payment or not receipt.get("available"):
+        messages.info(
+            request,
+            "There is no receipt for this payment yet. A receipt appears once the "
+            "provider confirms the money.",
+        )
+        if payment:
+            return redirect("payment-detail", payment_id=payment_id)
+        return redirect("bookings")
+    receipt["payment_id"] = str(payment.get("id") or payment_id)
+    conversation_id = _conversation_for_payment(client, payment, request)
+    back_url = (
+        reverse("conversation-detail", kwargs={"conversation_id": conversation_id})
+        if conversation_id
+        else reverse("payment-detail", kwargs={"payment_id": payment_id})
+    )
+    return page(
+        request,
+        "payments/receipt.html",
+        payment=payment,
+        receipt=receipt,
+        back_url=back_url,
+    )
+
+
+@api_guard
+def payment_receipt_pdf(request, payment_id):
+    """The same receipt as a PDF file the payer can keep or forward."""
+    client = APIClient(request)
+    try:
+        payment, receipt = _payment_with_receipt(client, payment_id)
+    except APIError as exc:
+        handle_api_error(request, exc)
+        return redirect("bookings")
+    if not payment or not receipt.get("available"):
+        messages.info(
+            request,
+            "There is no receipt for this payment yet. A receipt appears once the "
+            "provider confirms the money.",
+        )
+        if payment:
+            return redirect("payment-detail", payment_id=payment_id)
+        return redirect("bookings")
+    from .receipt_pdf import build_receipt_pdf
+
+    document = build_receipt_pdf(receipt)
+    filename = f"receipt-{receipt.get('number') or payment_id}.pdf"
+    response = HttpResponse(document, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 
 @api_guard
@@ -4887,7 +5903,13 @@ def payment_detail(request, payment_id):
     except APIError as exc:
         handle_api_error(request, exc)
         return redirect("bookings")
-    return page(request, "payments/detail.html", payment=payment)
+    receipt = payment.get("receipt") if isinstance(payment, dict) else {}
+    return page(
+        request,
+        "payments/detail.html",
+        payment=payment,
+        receipt=receipt if isinstance(receipt, dict) else {},
+    )
 
 
 @api_guard
@@ -5055,10 +6077,55 @@ def review_create(request):
                 idempotency_key=new_idempotency_key("review-create"),
             )
             messages.success(request, "Thank you. Your review has been submitted.")
-            return redirect("booking-detail", pk=review.get("booking"))
+            booking_id = review.get("booking")
+            target = reverse("review-thanks")
+            if booking_id:
+                target = f"{target}?booking={booking_id}"
+            return redirect(target)
         except APIError as exc:
             handle_api_error(request, exc)
-    return page(request, "reviews/new.html", form=form)
+    return page(
+        request,
+        "reviews/new.html",
+        form=form,
+        star_values=[1, 2, 3, 4, 5],
+    )
+
+
+@api_guard
+def review_thanks(request):
+    """The review landed; show the receipt and ask one small question about us."""
+    booking_id = str(request.GET.get("booking") or "").strip()
+    next_url = ""
+    if booking_id:
+        next_url = safe_internal_next(
+            request, reverse("booking-detail", kwargs={"pk": booking_id})
+        )
+    return page(
+        request,
+        "reviews/thanks.html",
+        next_url=next_url,
+    )
+
+
+@require_POST
+def review_improvement(request):
+    """One improvement note about the platform itself, kept away from ratings."""
+    note = str(request.POST.get("note") or "").strip()
+    destination = safe_internal_next(request, request.POST.get("next", "")) or ""
+    if not note:
+        messages.info(request, "Nothing was written, so nothing was sent.")
+        return redirect(destination or "bookings")
+    try:
+        APIClient(request).post(
+            "/reviews/platform-feedback/",
+            {"note": note[:2000], "page": "review"},
+            idempotency_key=new_idempotency_key("platform-feedback"),
+        )
+        messages.success(request, "Thank you — that is exactly what we need to fix.")
+    except APIError as exc:
+        handle_api_error(request, exc)
+    return redirect(destination or "bookings")
 
 
 # ---------------- Customer cancellation risk ----------------
@@ -6165,6 +7232,40 @@ def _notification_list_url(*, only_unread, offset, back_url, delete_all=False):
     if back_url and back_url != reverse("home"):
         query["next"] = back_url
     return f"{reverse('notifications-page')}?{urlencode(query)}"
+
+
+@api_guard
+def notification_popups(request):
+    """Same-origin bridge to the popup feed.
+
+    The browser never talks to the API directly: the session-authenticated
+    frontend proxies the request, so no API credential is exposed to the page.
+    """
+    from django.http import JsonResponse
+
+    if request.method != "GET":
+        return JsonResponse({"detail": "Use GET."}, status=405)
+    try:
+        _, payload, _ = APIClient(request).get("/notifications/popups/")
+    except APIError:
+        return JsonResponse([], safe=False)
+    return JsonResponse(payload, safe=False)
+
+
+@api_guard
+def notification_acknowledge(request, pk):
+    """Acknowledge one popup: the durable notification is marked read."""
+    from django.http import JsonResponse
+
+    if request.method != "POST":
+        return JsonResponse({"detail": "Use POST."}, status=405)
+    try:
+        APIClient(request).post(f"/notifications/{int(pk)}/read/", {})
+    except APIError as exc:
+        return JsonResponse({"detail": str(exc)}, status=exc.status_code)
+    except (TypeError, ValueError):
+        return JsonResponse({"detail": "Invalid notification."}, status=400)
+    return JsonResponse({"status": "read"})
 
 
 @api_guard

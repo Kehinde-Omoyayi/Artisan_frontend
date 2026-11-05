@@ -15,6 +15,7 @@
   {% block head %}{% endblock %}
   <link rel="stylesheet" href="{% asset 'css/brand-overrides.css' %}">
 <link rel="stylesheet" href="{% asset 'css/site-experience.css' %}">
+<link rel="stylesheet" href="{% asset 'css/bookings.css' %}">
 </head>
 <body class="{% block body_class %}{% endblock %}" data-tour-role="{{ tour_role|default:nav_role|default:'guest' }}" data-tour-user="{{ tour_user_key|default:'guest' }}" data-tour-auto="{% if tour_auto_offer %}true{% else %}false{% endif %}" data-tour-manager="{% if platform_manager %}true{% else %}false{% endif %}" data-payment-notice-auto="{% if payment_notice_auto_offer %}true{% else %}false{% endif %}">
 <div class="experience-background" aria-hidden="true"><i></i><i></i></div>
@@ -55,6 +56,14 @@
     </div>
   </section>
 </dialog>
+
+{% if user.is_authenticated %}
+<div class="booking-event-layer" data-booking-events
+     data-popups-url="{% url 'notification-popups' %}"
+     data-ack-url="{% url 'notification-acknowledge' pk=0 %}"
+     hidden></div>
+<div class="booking-toast-stack" data-booking-toasts aria-live="polite" aria-atomic="false"></div>
+{% endif %}
 
 <dialog class="payment-notice-dialog" data-payment-notice-dialog aria-labelledby="payment-notice-title" aria-describedby="payment-notice-description">
   <section class="payment-notice-card">
@@ -119,6 +128,7 @@
 <script src="{% asset 'js/geography-controls.js' %}"></script>
 {% endif %}
 <script src="{% asset 'js/site.js' %}"></script>
+<script src="{% asset 'js/booking-events.js' %}"></script>
 <script src="{% asset 'js/promotion-tracking.js' %}" defer></script>
 {% page_script page_js_path %}
 {% block scripts %}{% endblock %}

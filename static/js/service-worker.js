@@ -1,10 +1,10 @@
 'use strict';
 
-// v3: the offline request-assistant page and its rule-based draft mirroring
-// were removed with the request-first workflow. This worker now only keeps
-// static assets fresh (stale-while-revalidate); pages require the network so
-// booking/payment state is always read live from the server.
-const SHELL_CACHE = 'artisan-market-shell-v3';
+// v4: request drafts and the offline request-assistant were removed entirely;
+// request details are submitted once from a server-rendered form. This worker
+// only keeps static assets fresh (stale-while-revalidate); pages require the
+// network so booking/payment state is always read live from the server.
+const SHELL_CACHE = 'artisan-market-shell-v5';
 const PRECACHE_URLS = [
   '/static/css/site.css',
   '/static/css/conversations.css',
@@ -27,7 +27,7 @@ self.addEventListener('activate', (event) => {
     caches.keys()
       .then((keys) => Promise.all(keys
         // Drop every previous shell generation, including the retired
-        // artisan-market-offline-* caches that contained the offline draft app.
+        // artisan-market-offline-* caches.
         .filter((key) => (key.startsWith('artisan-market-offline-') || key.startsWith('artisan-market-shell-')) && key !== SHELL_CACHE)
         .map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
