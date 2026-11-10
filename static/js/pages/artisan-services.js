@@ -40,8 +40,20 @@
     }
   };
 
-  const geography = readJSONObject('service-geography-records', {});
-  const institutions = readJSON('service-institution-records', []);
+  /* The world list lives in a 2.4 MB static file and is fetched the first time
+     a location picker is opened; until then the pickers use what the page
+     already has. */
+  let geography = readJSONObject('service-geography-records', {});
+  const geographyUrl = form.dataset.geographyUrl || '';
+  /* The institution register is ~5 MB. It is searched and paged on the
+     server: fifty rows at a time, filtered by the location pickers. */
+  const institutionsUrl = form.dataset.institutionsUrl || '';
+  let institutionRows = [];
+  let institutionTotal = 0;
+  let institutionSeq = 0;
+  let institutionTimer = 0;
+  let institutionLoaded = false;
+  let selectedInstitution = null;
   const catalogue = readJSON('service-catalogue-records', []);
 
   const anywhereValue = form.dataset.anywhereValue || '__anywhere__';
@@ -72,7 +84,13 @@
     state: inputs.state.value || '',
     area: inputs.area.value || '',
     institution: inputs.institution.value || '',
-    anywhere: !inputs.location.value || inputs.location.value === anywhereValue,
+    anywhere: (() => {
+      const field = form.querySelector('[name="available_anywhere"]');
+      if (field) {
+        return ['true', '1', 'on', 'yes'].includes(String(field.value).trim().toLowerCase());
+      }
+      return !inputs.location.value || inputs.location.value === anywhereValue;
+    })(),
   };
 
   /* --------------------------------------------------------------- helpers */
@@ -91,7 +109,7 @@
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
   const categories = uniqueSorted(catalogueServices.map((item) => item.category));
-  const countries = uniqueSorted(Object.keys(geography));
+  const countryList = () => uniqueSorted(Object.keys(geography));
 
   const statesFor = (countryName) =>
     countryName ? uniqueSorted(Object.keys(geography[countryName] || {})) : [];
@@ -200,18 +218,20 @@
   /* -------------------------------------------------------------- coverage */
 
   const syncLocation = () => {
-    if (state.anywhere) {
-      inputs.location.value = anywhereValue;
+    // The server reads "available_anywhere" plus the three names, so this hidden
+    // field is only a convenience: a complete area wins, anywhere fills the gap.
+    const record = locationFor(state.country, state.state, state.area);
+    if (record) {
+      inputs.location.value = record.id;
       return;
     }
-    const record = locationFor(state.country, state.state, state.area);
-    inputs.location.value = record ? record.id : '';
+    inputs.location.value = state.anywhere ? anywhereValue : '';
   };
 
   const renderCountries = () => {
     renderOptions(
       'country',
-      countries.map((name) => ({ value: name, label: name })),
+      countryList().map((name) => ({ value: name, label: name })),
       (item) => {
         state.country = item.value;
         state.state = '';
@@ -253,6 +273,44 @@
     setValue('state', state.state, 'All states');
   };
 
+  const areaEmptyNote = () => {
+    const row = rows.area;
+    return row ? row.querySelector('[data-picker-empty="area"]') : null;
+  };
+
+  const areaLoads = new Set();
+  const ensureCountryAreas = () => {
+    const countryName = state.country;
+    if (!countryName || !geographyUrl || !window.GeographySource) return;
+    if (areasFor(countryName, state.state).length) return;
+    if (areaLoads.has(countryName)) return;
+    areaLoads.add(countryName);
+    // GeographySource fills the shared tree in place, which is the same object
+    // this page reads through `geography`.
+    window.GeographySource.areas(geographyUrl, countryName)
+      .then(() => {
+        renderAreas();
+        // A state can genuinely list no localities; say so rather than keep
+        // showing "Loading…" after the answer has arrived.
+        if (areasFor(countryName, state.state).length) return;
+        const note = areaEmptyNote();
+        if (note) {
+          note.textContent = 'No areas are listed for this state yet. Choose another state, or use the closest institution below.';
+          note.hidden = false;
+        }
+      })
+      .catch(() => {
+        // Say what actually happened instead of spinning forever.
+        if (areasFor(countryName, state.state).length) return;
+        const note = areaEmptyNote();
+        if (note) {
+          note.textContent = 'Could not load the areas for this state. Check your connection, then open this list again.';
+          note.hidden = false;
+        }
+      })
+      .finally(() => areaLoads.delete(countryName));
+  };
+
   const renderAreas = () => {
     const names = areasFor(state.country, state.state);
     const row = rows.area;
@@ -263,6 +321,15 @@
         target.classList.add('is-placeholder');
       }
     }
+    const emptyNote = areaEmptyNote();
+    if (emptyNote) {
+      // The note is only for the open panel with nothing in it: the picker was
+      // never given a state, the areas are still coming, or the fetch failed.
+      if (!state.state) emptyNote.textContent = 'Choose a state first.';
+      else if (!names.length) emptyNote.textContent = 'Loading areas for this state…';
+      emptyNote.hidden = names.length > 0;
+    }
+    if (state.state && !names.length) ensureCountryAreas();
     renderOptions(
       'area',
       names.map((name) => ({ value: name, label: name })),
@@ -270,6 +337,7 @@
         state.area = item.value;
         inputs.area.value = state.area;
         setValue('area', state.area, 'All areas');
+        if (state.area) showCoverageNote('');
         syncLocation();
         renderInstitutions();
       },
@@ -285,72 +353,159 @@
 
   const institutionCountry = (item) => String(item.country || '');
 
-  const filteredInstitutions = () => {
-    let list = institutions.filter((item) => {
-      if (state.country && institutionCountry(item).toLowerCase() !== state.country.toLowerCase()) return false;
-      if (state.state && String(item.state || '').toLowerCase() !== String(state.state || '').toLowerCase()) return false;
-      if (state.area && String(item.area || '').toLowerCase() !== String(state.area || '').toLowerCase()) return false;
-      return true;
-    });
-    // Alphabetical with Nigeria first
-    list = [...list].sort((a, b) => {
-      const aNigeria = institutionCountry(a).toLowerCase() === 'nigeria' ? 0 : 1;
-      const bNigeria = institutionCountry(b).toLowerCase() === 'nigeria' ? 0 : 1;
-      if (aNigeria !== bNigeria) return aNigeria - bNigeria;
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || String(a.state || '').localeCompare(String(b.state || ''), undefined, { sensitivity: 'base' });
-    });
-    return list;
+  const institutionQuery = () => {
+    const input = form.querySelector('[data-picker-search="institution"]');
+    return input ? input.value.trim() : '';
   };
 
-  const renderInstitutions = () => {
-    renderOptions(
-      'institution',
-      filteredInstitutions().map((item) => ({ value: String(item.id), label: institutionLabel(item) })),
-      (item) => {
-        const record = institutions.find((entry) => String(entry.id) === item.value);
-        if (!record) return;
-        state.institution = String(record.id);
-        inputs.institution.value = institutionLabel(record);
-        setValue('institution', institutionLabel(record), 'Optional');
-
-        // Picking an institution fills the geographic pickers from its record.
-        state.country = record.country || state.country;
-        state.state = record.state || state.state;
-        state.area = record.area || state.area;
-        inputs.country.value = state.country;
-        inputs.state.value = state.state;
-        inputs.area.value = state.area;
-        setValue('country', state.country, 'All countries');
-        renderStates();
-        renderAreas();
-        syncLocation();
-        renderInstitutions();
-      },
-      state.institution,
-    );
+  const institutionParams = (offset) => {
+    const params = new URLSearchParams();
+    const query = institutionQuery();
+    if (query) params.set('q', query);
+    if (state.country) params.set('country', state.country);
+    if (state.state) params.set('state', state.state);
+    if (state.area) params.set('area', state.area);
+    params.set('offset', String(offset));
+    return params;
   };
+
+  const institutionItems = () =>
+    institutionRows.map((item) => ({ value: String(item.id), label: institutionLabel(item) }));
+
+  const paintInstitutionMore = () => {
+    const more = form.querySelector('[data-picker-more="institution"]');
+    if (!more) return;
+    const left = institutionTotal - institutionRows.length;
+    more.hidden = left <= 0;
+    more.textContent = left > 0 ? `Show more (${left.toLocaleString()} left)` : '';
+  };
+
+  const loadInstitutions = (reset = true) => {
+    if (!institutionsUrl) return;
+    const offset = reset ? 0 : institutionRows.length;
+    const seq = ++institutionSeq;
+    fetch(`${institutionsUrl}?${institutionParams(offset).toString()}`, {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (seq !== institutionSeq || !payload) return;
+        const rows = Array.isArray(payload.results) ? payload.results : [];
+        institutionRows = reset ? rows : institutionRows.concat(rows);
+        institutionTotal = Number.parseInt(payload.count || 0, 10) || institutionRows.length;
+        institutionLoaded = true;
+        renderInstitutions(false);
+        const chosen = state.institution
+          ? institutionRows.find((item) => String(item.id) === String(state.institution))
+          : null;
+        if (chosen && !selectedInstitution) selectedInstitution = chosen;
+      })
+      .catch(() => {});
+  };
+
+  const loadInstitutionById = (id) => {
+    if (!institutionsUrl || !id) return;
+    const url = `${institutionsUrl}?id=${encodeURIComponent(id)}`;
+    fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const row = payload && Array.isArray(payload.results) ? payload.results[0] : null;
+        if (!row) return;
+        selectedInstitution = row;
+        inputs.institution.value = String(row.id);
+        setValue('institution', institutionLabel(row), 'Optional');
+      })
+      .catch(() => {});
+  };
+
+  const pickInstitution = (item) => {
+    const record =
+      institutionRows.find((entry) => String(entry.id) === item.value) || selectedInstitution;
+    if (!record) return;
+    selectedInstitution = record;
+    state.institution = String(record.id);
+    inputs.institution.value = institutionLabel(record);
+    setValue('institution', institutionLabel(record), 'Optional');
+
+    // Picking an institution fills the geographic pickers from its record.
+    if (record.country) state.country = record.country;
+    if (record.state) state.state = record.state;
+    if (record.area) state.area = record.area;
+    inputs.country.value = state.country;
+    inputs.state.value = state.state;
+    inputs.area.value = state.area;
+    setValue('country', state.country, 'All countries');
+    renderStates();
+    renderAreas();
+    syncLocation();
+  };
+
+  const institutionPanelOpen = () => {
+    const row = rows.institution;
+    return Boolean(row && row.classList.contains('is-open'));
+  };
+
+  const renderInstitutions = (reload = true) => {
+    renderOptions('institution', institutionItems(), pickInstitution, state.institution);
+    paintInstitutionMore();
+    // Only an open panel needs rows: a closed picker fetches when it is opened.
+    if (reload && institutionPanelOpen()) loadInstitutions(true);
+  };
+
+  const institutionSearch = form.querySelector('[data-picker-search="institution"]');
+  if (institutionSearch) {
+    institutionSearch.addEventListener('input', () => {
+      clearTimeout(institutionTimer);
+      institutionTimer = setTimeout(() => loadInstitutions(true), 220);
+    });
+  }
+
+  const institutionMore = form.querySelector('[data-picker-more="institution"]');
+  if (institutionMore) {
+    institutionMore.addEventListener('click', () => loadInstitutions(false));
+  }
 
   const coverage = form.querySelector('[data-anywhere-toggle]');
   const locationRows = form.querySelector('[data-location-rows]');
   const caption = form.querySelector('[data-anywhere-caption]');
 
-  const renderCoverage = () => {
+  /* "Available anywhere" and a named area are two promises, not two modes: both
+     may be on at once, so this switch never hides the area pickers. */
+  const anywhereInput = form.querySelector('[name="available_anywhere"]');
+  const coverageNote = form.querySelector('[data-coverage-note]');
+  const showCoverageNote = (text) => {
+    if (!coverageNote) return;
+    coverageNote.textContent = text || '';
+    coverageNote.hidden = !text;
+  };
+
+  const setAnywhere = (value) => {
+    state.anywhere = Boolean(value);
+    if (anywhereInput) anywhereInput.value = state.anywhere ? 'True' : 'False';
     if (coverage) coverage.setAttribute('aria-pressed', String(state.anywhere));
-    if (locationRows) locationRows.hidden = state.anywhere;
     if (caption) {
       caption.textContent = state.anywhere
         ? 'Available across all locations'
-        : 'Served at one registered location';
+        : 'Only the area you choose below';
     }
-    if (state.anywhere) closeRows();
+    if (state.anywhere) showCoverageNote('');
+    syncLocation();
+  };
+
+  const renderCoverage = () => {
+    if (coverage) coverage.setAttribute('aria-pressed', String(state.anywhere));
+    if (locationRows) locationRows.hidden = false;
+    if (caption) {
+      caption.textContent = state.anywhere
+        ? 'Available across all locations'
+        : 'Only the area you choose below';
+    }
     syncLocation();
   };
 
   if (coverage) {
-    coverage.addEventListener('click', () => {
-      state.anywhere = !state.anywhere;
-      renderCoverage();
-    });
+    coverage.addEventListener('click', () => setAnywhere(!state.anywhere));
   }
 
   /* ----------------------------------------------------------- interactions */
@@ -361,6 +516,22 @@
       if (!row) return;
       const body = row.querySelector('[data-picker-body]');
       const open = !row.classList.contains('is-open');
+      const key = row.dataset.pickerKey;
+      if (open && key === 'institution') loadInstitutions(true);
+      if (open && ['country', 'state', 'area'].includes(key) && !Object.keys(geography).length && geographyUrl && window.GeographySource) {
+        window.GeographySource.load(geographyUrl)
+          .then((source) => {
+            geography = (source && source.tree) || {};
+            renderCountries();
+            renderStates();
+            renderAreas();
+            return key === 'area' ? window.GeographySource.areas(geographyUrl, state.country) : null;
+          })
+          .then(() => renderAreas())
+          .catch(() => {});
+      } else if (open && key === 'area' && geographyUrl && window.GeographySource) {
+        window.GeographySource.areas(geographyUrl, state.country).then(() => renderAreas()).catch(() => {});
+      }
       closeRows(row);
       row.classList.toggle('is-open', open);
       head.setAttribute('aria-expanded', String(open));
@@ -390,6 +561,7 @@
     }
     if (!state.anywhere && !inputs.location.value) {
       event.preventDefault();
+      showCoverageNote('Choose where this service is offered: available anywhere, one specific area, or both.');
       renderCoverage();
       const countryRow = rows.country;
       if (countryRow) {
@@ -412,6 +584,7 @@
   renderAreas();
   renderInstitutions();
   renderCoverage();
+  if (state.institution && !institutionLoaded) loadInstitutionById(state.institution);
 
   setValue('category', state.category, 'Choose a category');
   setValue('service', state.service, 'Choose a service');

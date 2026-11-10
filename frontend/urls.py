@@ -3,6 +3,22 @@ from frontend import views
 
 urlpatterns = [
     path("catalogue/institutions/", views.institution_catalogue, name="institution-catalogue"),
+    path("catalogue/geography.json", views.catalogue_geography_index, name="catalogue-geography-index"),
+    path(
+        "catalogue/geography/<slug:slug>.json",
+        views.catalogue_geography_country,
+        name="catalogue-geography-country",
+    ),
+    # Promotion form options, fetched once by the browser when a target group
+    # opens instead of being inlined into the page (thousands of rows).
+    path(
+        "catalogue/promotion-picker.json",
+        views.promotion_picker,
+        name="promotion-picker",
+    ),
+    # Picker data, fetched by the browser once instead of being inlined into
+    # every page (it used to add ~7 MB of JSON to the request pages).
+    path("ui/request-catalogue.json", views.ui_request_catalogue, name="ui-request-catalogue"),
     path("service-worker.js", views.service_worker, name="service-worker"),
     path("", views.home, name="home"),
     path("dashboard/", views.home, name="dashboard"),

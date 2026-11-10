@@ -38,10 +38,18 @@ Start the API separately first. Then initialize the frontend's **session-only** 
 python manage.py migrate
 python manage.py check
 python manage.py test
-python manage.py runserver 0.0.0.0:8001
+python manage.py runserver 0.0.0.0:8001 --nostatic
 ```
 
-Open `http://127.0.0.1:8001`. For development, Django's static-file server serves the checked-in CSS, JavaScript, fonts, and local image assets. No `collectstatic` step is required for `DEBUG=true`.
+Open `http://127.0.0.1:8001`. For development, WhiteNoise serves the checked-in CSS, JavaScript, fonts, and local image assets straight from `static/` — that is what `--nostatic` turns on. No `collectstatic` step is required for `DEBUG=true`. Without `--nostatic` the page still works; Django's own development static server answers instead, it just sends no cache header, so the browser re-downloads all ~24 assets on every visit.
+
+### When a page looks slow or a picker is empty
+
+```bash
+python manage.py api_check
+```
+
+It prints the API address being called, whether it answers, and how long each of the four calls every page depends on takes. A page slower than `SLOW_PAGE_LOG_MS` (default 500 ms) also writes one line to the server log with the split between API time and render time, so the slow page names itself.
 
 The `.env.example` file uses a clearly marked development-only key. Replace it for any shared or deployed environment. Do not copy API, Google, Apple, email, payment-provider, or Django production secrets into source files or this ZIP.
 
@@ -57,6 +65,9 @@ The `.env.example` file uses a clearly marked development-only key. Replace it f
 | `ARTISAN_API_BASE_URL` | API prefix, normally `https://api.example.com/api/v1`; include `/api/v1`. |
 | `ARTISAN_API_ROOT_URL` | API origin for root-level operational endpoints such as `/health/`. |
 | `ARTISAN_API_TIMEOUT` | Outbound API request timeout in seconds. |
+| `ARTISAN_API_FALLBACK_LOCAL` | Default `true`. If `ARTISAN_API_BASE_URL` is a public address that stops answering, pages retry the API on this machine for a minute and log one line saying so. Set `false` to disable. |
+| `ARTISAN_API_LOCAL_URL` | Default `http://127.0.0.1:8000`. The address used by that fallback. |
+| `SLOW_PAGE_LOG_MS` | Default `500`. Any page slower than this is logged with its API/render split. |
 | `FRONTEND_SESSION_DB` | SQLite file path for Django sessions. It stores browser session state and API bearer tokens, **not** marketplace records. Keep it private and persistent. |
 | `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, `SECURE_SSL_REDIRECT` | Secure transport settings. Production defaults are enabled; keep them on behind HTTPS. |
 | `SECURE_HSTS_SECONDS` | Production must set an explicit positive HSTS duration only after HTTPS coverage and the domain scope are approved. The example value `0` deliberately leaves this decision pending, and production settings reject it until configured. |

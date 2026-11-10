@@ -1,146 +1,14 @@
-"""Frontend-owned JSON catalogue and form snapshots; no backend catalogue lookup."""
+"""Profile helpers backed by the API's catalogue.
 
-import json
-from functools import lru_cache
-from pathlib import Path
-from .geography import canonical_location
+The register itself (30k institutions, 8 MB of JSON) lives in the API project;
+:mod:`frontend.catalogue_source` fetches and caches it. This module keeps only
+the profile rules: the default location chain and what a saved institution must
+resolve to.
+"""
 
-ROOT = Path(__file__).resolve().parents[1] / "static/data/institutions"
-DEFAULTS = {
-    "country": "Nigeria",
-    "state": "Ogun",
-    "area": "Abeokuta",
-    "nearest_institution": "Federal University of Agriculture, Abeokuta",
-    "nearest_institution_abbreviation": "FUNAAB",
-}
+from .catalogue_source import catalogue_page, defaults, institution_record
 
-
-@lru_cache(maxsize=1)
-def index():
-    return json.loads((ROOT / "index.json").read_text(encoding="utf-8"))
-
-
-def _institution_sort_key(r):
-    """Alphabetical by name; Nigeria always first when no country filter."""
-    is_nigeria = 0 if r["country"].casefold() == "nigeria" else 1
-    return (
-        is_nigeria,
-        r["name"].casefold(),
-        r["country"].casefold(),
-        r["state"].casefold(),
-        r["area"].casefold(),
-        r["source_id"],
-    )
-
-
-@lru_cache(maxsize=32)
-def institutions(country):
-    entry = next(
-        (
-            item
-            for item in index()["countries"]
-            if item["country"].casefold() == str(country).casefold()
-        ),
-        None,
-    )
-    rows = json.loads((ROOT / entry["file"]).read_text(encoding="utf-8")) if entry else []
-    # Always return alphabetically sorted within the country
-    return sorted(
-        rows,
-        key=lambda r: (
-            r["name"].casefold(),
-            r["state"].casefold(),
-            r["area"].casefold(),
-            r["source_id"],
-        ),
-    )
-
-
-@lru_cache(maxsize=1)
-def all_institutions():
-    return tuple(
-        sorted(
-            (
-                row
-                for entry in index()["countries"]
-                for row in institutions(entry["country"])
-            ),
-            key=_institution_sort_key,
-        )
-    )
-
-
-@lru_cache(maxsize=1)
-def source_records():
-    return {row["source_id"]: row for row in all_institutions()}
-
-
-def institution_record(source_id):
-    return source_records().get(str(source_id or "").strip())
-
-
-def catalogue_page(params):
-    """Public read-only frontend JSON search. Every geographic parameter is optional."""
-    key = str(params.get("id") or "").strip()[:100]
-    if key:
-        row = institution_record(key)
-        records = [row] if row else []
-    else:
-        country = str(params.get("country") or "").strip()
-        records = institutions(country) if country else all_institutions()
-    for field in ("country", "state", "area"):
-        value = str(params.get(field) or "").strip().casefold()[:150]
-        if value:
-            records = [r for r in records if r[field].casefold() == value]
-    # Directly reduce institution list when country/state/area is present — re-sort to keep alphabetical
-    has_country = bool(str(params.get("country") or "").strip())
-    if has_country:
-        records = sorted(
-            records,
-            key=lambda r: (
-                r["name"].casefold(),
-                r["state"].casefold(),
-                r["area"].casefold(),
-                r["source_id"],
-            ),
-        )
-    else:
-        records = sorted(records, key=_institution_sort_key)
-    query = str(params.get("q") or "").strip().casefold()[:180]
-    if query:
-        records = [
-            r
-            for r in records
-            if any(
-                query in str(value).casefold()
-                for value in [
-                    r["name"],
-                    *(r.get("abbreviations") or []),
-                    *(r.get("aliases") or []),
-                ]
-            )
-        ]
-    try:
-        offset = max(0, min(int(params.get("offset") or 0), 1000000))
-    except (TypeError, ValueError):
-        offset = 0
-    results = []
-    for row in records[offset : offset + 50]:
-        results.append(
-            {
-                **row,
-                "id": row["source_id"],
-                "abbreviation": next(iter(row.get("abbreviations") or []), ""),
-                "campus": "",
-            }
-        )
-    return {
-        "count": len(records),
-        "results": results,
-        "offset": offset,
-        "limit": 50,
-        "source": "frontend-json",
-    }
+DEFAULTS = defaults()
 
 
 def initialize_profile_location(form):
@@ -153,7 +21,19 @@ def initialize_profile_location(form):
         form.initial.update(DEFAULTS)
 
 
+def _candidates(name: str):
+    payload = catalogue_page({"q": name})
+    wanted = name.casefold()
+    return [
+        row
+        for row in payload.get("results") or []
+        if str(row.get("name") or "").casefold() == wanted
+    ]
+
+
 def clean_profile_location(form, cleaned):
+    from .geography import canonical_location
+
     selected = str(cleaned.get("nearest_institution") or "").strip()
     source_id = str(cleaned.get("nearest_institution_source_id") or "").strip()
     original = str(form.initial.get("nearest_institution") or "")
@@ -165,11 +45,7 @@ def clean_profile_location(form, cleaned):
             )
             return cleaned
         if not match:
-            candidates = [
-                r
-                for r in all_institutions()
-                if r["name"].casefold() == selected.casefold()
-            ]
+            candidates = _candidates(selected)
             # A unique typed name can resolve even when no location was chosen.
             if len(candidates) == 1:
                 match = candidates[0]
@@ -212,7 +88,7 @@ def clean_profile_location(form, cleaned):
             return cleaned
         form.add_error(
             "nearest_institution",
-            "Choose an institution from the frontend catalogue, or clear it.",
+            "Choose an institution from the catalogue, or clear it.",
         )
         return cleaned
     cleaned["nearest_institution"] = ""

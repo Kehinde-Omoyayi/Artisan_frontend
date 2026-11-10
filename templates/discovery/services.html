@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}Services · Artisan Market{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <div class="eyebrow">Public catalogue</div>
+    <h1>Services</h1>
+    <p>Browse the work artisans offer. Pick one, then describe the job in a chat — the artisan prices it there, line by line.</p>
+  </div>
+  <a class="button button-secondary" href="{% url 'artisans' %}">Find artisans</a>
+</section>
+
+{% if categories %}
+<section class="tile-grid" aria-label="Filter by category">
+  <a class="category-tile{% if not selected_category %} is-active{% endif %}" href="{% url 'services' %}"><strong>All categories</strong></a>
+  {% for category in categories %}
+  <a class="category-tile{% if category.selected %} is-active{% endif %}" href="{% url 'services' %}?category_name={{ category.name|urlencode }}"><strong>{{ category.name }}</strong></a>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="tile-grid">
+  {% for item in items %}
+  <article class="category-tile">
+    <strong>{{ item.name }}</strong>
+    {% if item.category_name %}<span class="eyebrow">{{ item.category_name }}</span>{% endif %}
+    <a href="{% url 'artisans' %}?service_name={{ item.name|urlencode }}">See the artisans who do this</a>
+  </article>
+  {% empty %}
+  <div class="empty">No services were returned by the marketplace API.</div>
+  {% endfor %}
+</section>
+{% endblock %}

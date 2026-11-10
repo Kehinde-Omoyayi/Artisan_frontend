@@ -1,20 +1,10 @@
-"""Worldwide geography independent of artisan coverage. See data/GEOGRAPHY-SOURCE.md."""
+"""Worldwide geography, served by the API.
 
-import json
-from functools import lru_cache
-from pathlib import Path
+The list itself lives in the API project (``catalogue/data``); this module only
+caches it for the request that needs it. See ``catalogue_source``.
+"""
 
-
-@lru_cache(maxsize=1)
-def world_geography():
-    return json.loads(
-        (
-            Path(__file__).resolve().parents[1]
-            / "static"
-            / "data"
-            / "world-geography.json"
-        ).read_text(encoding="utf-8")
-    )
+from .catalogue_source import world_geography
 
 
 def canonical_location(country, state, area):

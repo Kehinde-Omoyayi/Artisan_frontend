@@ -413,6 +413,11 @@ a:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,
 
 /* Global document flow: content grows to fill short screens; the footer stays in normal flow. */
 html,body{min-height:100%}
+/* Entrance motion moves a panel a few pixels sideways before it reveals; that
+   must never become a sideways scroll on a phone. `clip` stops the scroll
+   without creating a scroll container, so the sticky header still sticks. */
+html{overflow-x:clip}
+body{overflow-x:clip}
 body{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
 body>#main-content{width:100%;min-width:0;flex:1 0 auto}
 body>.site-header,body>.landing-header,body>.conversation-nav{flex:0 0 auto}

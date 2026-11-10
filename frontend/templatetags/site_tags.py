@@ -287,3 +287,19 @@ def short_system_message(value):
     if marker != -1:
         text = text[:marker]
     return text.strip()
+
+
+@register.simple_tag
+def geography_index_url():
+    """Versioned URL for the geography index the pickers load.
+
+    The version fingerprints the payload itself, so a browser that cached an
+    older index (it shipped with a day-long max-age) gets a brand-new URL the
+    moment the payload changes — area lists reappear with no manual cache
+    clearing anywhere on the site.
+    """
+    from django.urls import reverse
+
+    from ..catalogue_source import geography_index_version
+
+    return f"{reverse('catalogue-geography-index')}?v={geography_index_version()}"

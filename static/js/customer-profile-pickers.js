@@ -2,11 +2,14 @@
 (() => {
   const form = document.querySelector('[data-profile-pickers]');
   if (!form) return;
-  const data = document.getElementById('profile-geography-data');
-  let geo;
-  try { geo = JSON.parse(data.textContent); } catch (_) { return; }
-  // The server-rendered copy is a no-network fallback from the same static file.
-  if (form.dataset.geographyUrl) fetch(form.dataset.geographyUrl).then(r=>{if(!r.ok)throw Error('geography');return r.json();}).then(value=>{geo=value;}).catch(()=>{});
+  /* The geography list is fetched from a static file the browser caches; the
+     inline copy that used to ship with the page weighed ~2.4 MB. */
+  const readInline = () => {
+    const node = document.getElementById('profile-geography-data');
+    try { return JSON.parse(node ? node.textContent : '{}') || {}; } catch (_) { return {}; }
+  };
+  let geo = readInline();
+  const START = () => {
   const names = [...new Set(['phone_country_calling_code', 'country', 'state', 'area', 'nearest_institution', 'gender', 'date_of_birth', ...[...form.querySelectorAll('select[name]')].map(f=>f.name)])].filter(n=>form.elements.namedItem(n));
   const fields = Object.fromEntries(names.map(n => [n, form.elements.namedItem(n)]));
   const rows = {};
@@ -121,6 +124,10 @@
             if(scopeEl) scopeEl.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.institutionScope==='local')));
           }
           institutions();
+        } else if (n === 'area' && window.GeographySource && geographyUrl) {
+          window.GeographySource.areas(geographyUrl, fields.country?.value || '')
+            .then(() => renderLocal('area'))
+            .catch(() => renderLocal('area'));
         } else renderLocal(n);
         search.focus();
       }
@@ -215,4 +222,14 @@
   });
   document.addEventListener('click',e=>{if(!e.composedPath().some(node=>node.classList?.contains('profile-pick')))closeAll();});
   form.addEventListener('reset',()=>setTimeout(()=>{names.forEach(refresh);closeAll();},0));
+  };
+
+  const geographyUrl = form.dataset.geographyUrl;
+  // country -> states arrives with the index (~80 KB); a country's areas are
+  // fetched the first time its area list is opened.
+  if (geographyUrl && window.GeographySource) {
+    window.GeographySource.load(geographyUrl)
+      .then(source => { geo = (source && source.tree) || {}; START(); })
+      .catch(() => { geo = {}; START(); });
+  } else { START(); }
 })();

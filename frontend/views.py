@@ -9,15 +9,20 @@ import time
 from zoneinfo import ZoneInfo
 from urllib.parse import unquote, urlencode, urlparse
 from uuid import UUID
+import logging
+import re
+from functools import lru_cache
 
 from django.conf import settings
 from django.contrib import messages
 from django.http import Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
+
+logger = logging.getLogger(__name__)
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -558,6 +563,18 @@ def _consume_manager_values_reveal(request):
 
 def _staff_security_gate_target(request):
     gate = request.session.get("staff_security_gate")
+    if not gate:
+        return ""
+    # The gate belongs to a staff identity. If the API says the person signed in
+    # here is an artisan or a customer, it is not theirs: drop it rather than
+    # bounce them to a staff page. An API that omits the role is treated as
+    # unknown, so the gate still holds for staff.
+    signed_in_role = str(
+        (request.session.get("api_user") or {}).get("role") or ""
+    ).strip().lower()
+    if signed_in_role and signed_in_role != "staff":
+        request.session.pop("staff_security_gate", None)
+        return ""
     if gate == "PASSWORD_CHANGE_REQUIRED":
         return reverse("staff-password-change")
     if gate == "STAFF_SECURITY_SETUP_REQUIRED":
@@ -641,13 +658,16 @@ def page(request, template, **context):
         )
     context.setdefault("authenticated", authenticated)
     capabilities = context.get("support_capabilities")
-    context.setdefault(
-        "platform_manager",
-        bool(
-            (isinstance(capabilities, dict) and capabilities.get("is_superuser"))
-            or (isinstance(user_info, dict) and user_info.get("is_superuser"))
-        ),
+    manager_identity = bool(
+        (isinstance(capabilities, dict) and capabilities.get("is_superuser"))
+        or (isinstance(user_info, dict) and user_info.get("is_superuser"))
     )
+    if normalized_role in {"artisan", "customer"}:
+        # Manager chrome (privacy bar, analytics cards, staff navigation) belongs
+        # to the staff workspace only. Whatever a stale flag or a stale API token
+        # says, it is never painted onto an artisan's or a customer's page.
+        manager_identity = False
+    context.setdefault("platform_manager", manager_identity)
     context.setdefault("tour_role", normalized_role if authenticated else "guest")
     context.setdefault("tour_user_key", _onboarding_user_key(request, user_info))
     context.setdefault(
@@ -696,6 +716,28 @@ def handle_api_error(request, exc):
         APIClient(request).clear_session()
     level = messages.WARNING if exc.status_code == 429 else messages.ERROR
     messages.add_message(request, level, exc.user_message)
+
+
+def apply_api_field_errors(form, exc):
+    """Put a backend field complaint beside the box that caused it.
+
+    A rejected phone number used to arrive only as a red banner above the page,
+    far from the field, so people retyped the same thing. The payload already
+    names the field; show it there and keep whatever else they typed.
+    """
+    payload = getattr(exc, "payload", None)
+    details = payload.get("details") if isinstance(payload, dict) else None
+    if not isinstance(details, dict):
+        return
+    for name, value in details.items():
+        if name not in getattr(form, "fields", {}):
+            continue
+        entries = value if isinstance(value, (list, tuple)) else [value]
+        for entry in entries:
+            if isinstance(entry, dict):
+                entry = " ".join(str(part) for part in entry.values())
+            if str(entry).strip():
+                form.add_error(name, str(entry))
 
 
 def request_wants_json(request):
@@ -762,19 +804,56 @@ def _landing_home_context():
     }
 
 
+WORKSPACE_ROLES = {"artisan", "customer", "staff"}
+
+
+def _workspace_role(value):
+    """Normalise a stored role; anything unrecognised means "ask again"."""
+    role = str(value or "").strip().lower()
+    return role if role in WORKSPACE_ROLES else ""
+
+
+def _is_staff_identity(user_info):
+    """Only a staff account may ever open a staff workspace."""
+    if not isinstance(user_info, dict):
+        return False
+    return bool(user_info.get("is_staff") or user_info.get("is_superuser"))
+
+
 def current_role(request):
-    # Keep an established workspace choice for dual-role accounts; service
-    # conversations still use the backend's participant-specific viewer_role.
-    active_role = request.session.get("api_role")
+    """The signed-in person's OWN workspace.
+
+    The sign-in payload carries the real role, so a stored role wins -- with one
+    guard: a "staff" tag is honoured only while the stored identity is still a
+    staff account. A leftover tag from an earlier sign-in must never hand an
+    artisan (or a customer) the previous, staff user's dashboard. When no role
+    is stored, the API is asked which profile this account owns, and the
+    fallback is the customer workspace -- never the staff one.
+
+    Dual-role accounts keep their established workspace choice; service
+    conversations still use the backend's participant-specific viewer_role.
+    """
     user_info = request.session.get("api_user", {})
-    if active_role not in {"artisan", "customer", "staff"} and isinstance(
-        user_info, dict
-    ):
-        active_role = user_info.get("role")
-    if active_role in {"artisan", "customer", "staff"}:
-        request.session["api_role"] = active_role
-        request.session.modified = True
-        return active_role
+    staff_identity = _is_staff_identity(user_info)
+    stored_roles = (
+        _workspace_role(request.session.get("api_role")),
+        _workspace_role(user_info.get("role") if isinstance(user_info, dict) else ""),
+    )
+    role = ""
+    for candidate in stored_roles:
+        if candidate in {"artisan", "customer"}:
+            role = candidate
+            break
+        if candidate == "staff" and staff_identity:
+            role = "staff"
+            break
+    if role:
+        # Only touch the session when the value actually changed: assigning the
+        # same value still marks the session dirty, and a dirty session is an
+        # fsync to the session database on every single page.
+        if request.session.get("api_role") != role:
+            request.session["api_role"] = role
+        return role
     client = APIClient(request)
     try:
         client.get("/profile/artisan/personal/profile/")
@@ -784,9 +863,11 @@ def current_role(request):
             client.get("/profile/customer/personal/profile/")
             role = "customer"
         except APIError:
-            role = "staff"
-    request.session["api_role"] = role
-    request.session.modified = True
+            # Never guess "staff": an unknown account gets its own customer
+            # workspace, because staff pages expose other people's data.
+            role = "staff" if staff_identity else "customer"
+    if request.session.get("api_role") != role:
+        request.session["api_role"] = role
     return role
 
 
@@ -795,11 +876,16 @@ def redirect_after_login(request):
     if pending_response is not None:
         return pending_response
 
+    # The destination follows the signed-in person's own role, so a staff
+    # capability can never pull an artisan or a customer into a staff page.
+    role = current_role(request)
     capabilities = _support_capabilities(APIClient(request))
-    if capabilities.get("is_superuser") or capabilities.get("is_support_staff"):
+    staff_workspace = role == "staff" and (
+        capabilities.get("is_superuser") or capabilities.get("is_support_staff")
+    )
+    if staff_workspace:
         default_target = reverse("dashboard")
     else:
-        role = current_role(request)
         default_target = reverse("home") if role == "customer" else reverse("dashboard")
     candidate = (
         request.GET.get("next")
@@ -920,11 +1006,14 @@ def _is_payout_notification(item):
 
 
 def _support_capabilities(client):
-    try:
-        _, payload, _ = client.get("/support/cases/capabilities/")
-    except APIError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    """Capabilities for this request. Covered by many views: asked once."""
+    if getattr(client, "_capabilities_cache", None) is None:
+        try:
+            _, payload, _ = client.get("/support/cases/capabilities/")
+        except APIError:
+            payload = {}
+        client._capabilities_cache = payload if isinstance(payload, dict) else {}
+    return client._capabilities_cache
 
 
 def _count_from_payload(payload):
@@ -1210,11 +1299,20 @@ def home(request):
             is_landing_page=True,
         )
     client = APIClient(request)
-    capabilities = _support_capabilities(client)
-    if not capabilities.get("is_superuser"):
+    # The workspace is chosen by the signed-in person's own role first. Staff
+    # pages are only reachable for a staff identity: an artisan or a customer
+    # must always land on their own dashboard, never on the one the previous
+    # (staff) session was looking at.
+    role = current_role(request)
+    # Only a staff workspace needs the capability lookup; asking for it on every
+    # artisan and customer page added an API round-trip to each render.
+    capabilities = _support_capabilities(client) if role == "staff" else {}
+    is_manager = role == "staff" and bool(capabilities.get("is_superuser"))
+    is_support_staff = role == "staff" and bool(capabilities.get("is_support_staff"))
+    if not is_manager:
         request.session.pop(MANAGER_VALUES_REVEAL_SESSION_KEY, None)
         request.session.modified = True
-    if capabilities.get("is_superuser"):
+    if is_manager:
         reveal_scope = _consume_manager_values_reveal(request)
         manager_values_revealed = reveal_scope == "manager"
         manager_analytics = {}
@@ -1247,7 +1345,7 @@ def home(request):
         response["Expires"] = "0"
         return response
 
-    if capabilities.get("is_support_staff"):
+    if is_support_staff:
         return page(
             request,
             "support/dashboard.html",
@@ -1257,7 +1355,6 @@ def home(request):
             **_landing_home_context(),
         )
 
-    role = current_role(request)
     if role == "customer":
         return customer_profile(request, home_dashboard=True)
 
@@ -1336,8 +1433,44 @@ STAFF_MFA_SESSION_KEYS = (
 )
 
 
+# Everything in this tuple belongs to one signed-in person. A new sign-in has to
+# start clean: a staff gate left by the previous user would bounce an artisan to
+# the staff password page, and the unread counters of the account that was here
+# before would be painted onto the new account's badge.
+PER_USER_SESSION_KEYS = STAFF_MFA_SESSION_KEYS + (
+    "staff_security_gate",
+    "bvn_flow_stage",
+    "bvn_methods",
+    "console_config_preview",
+    "console_campaign_estimate",
+    "notif_unread",
+    "notif_unread_checked_at",
+    "msg_unread",
+    "msg_unread_checked_at",
+    "pending_email",
+    "social_auth_state",
+    "social_auth_started_at",
+    "social_auth_provider",
+    "social_auth_next",
+    "social_auth_intent",
+    "social_auth_first_name",
+    "social_auth_last_name",
+    "social_auth_browser_binding",
+    "social_registration_token",
+    "social_registration_email",
+    "social_registration_first_name",
+    "social_registration_last_name",
+)
+
+
 def _clear_staff_mfa_pending(request):
     for key in STAFF_MFA_SESSION_KEYS:
+        request.session.pop(key, None)
+
+
+def _clear_previous_user_session(request):
+    """Forget the person who was signed in before this one."""
+    for key in PER_USER_SESSION_KEYS:
         request.session.pop(key, None)
 
 
@@ -1361,6 +1494,7 @@ def _store_authenticated_api_session(request, payload):
         return False
     client = APIClient(request)
     client.clear_session()
+    _clear_previous_user_session(request)
     request.session.cycle_key()
     request.session["api_access"] = access
     request.session["api_refresh"] = refresh
@@ -1382,12 +1516,9 @@ def _store_authenticated_api_session(request, payload):
 
 
 def _staff_security_gate_redirect(request):
-    gate = request.session.get("staff_security_gate")
-    if gate == "PASSWORD_CHANGE_REQUIRED":
-        return redirect("staff-password-change")
-    if gate == "STAFF_SECURITY_SETUP_REQUIRED":
-        return redirect("staff-security-questions")
-    return None
+    """The gate, as a redirect. One rule, shared with ``api_guard`` and ``page``."""
+    target = _staff_security_gate_target(request)
+    return redirect(target) if target else None
 
 
 def staff_mfa(request):
@@ -1920,7 +2051,11 @@ def customer_profile(request, *, home_dashboard=False):
         _, profile, _ = client.get("/profile/customer/personal/profile/")
     except APIError as exc:
         handle_api_error(request, exc)
-        return redirect("dashboard")
+        if not home_dashboard:
+            return redirect("dashboard")
+        # This page *is* the dashboard target, so bouncing it back to
+        # /dashboard/ would loop forever. Show the workspace shell instead.
+        profile = {}
 
     completion_requested = bool(
         request.session.get(PENDING_ACTION_SESSION_KEY)
@@ -1994,6 +2129,7 @@ def customer_profile(request, *, home_dashboard=False):
                 return redirect(next_target)
             return redirect("home" if home_dashboard else "customer-profile")
         except APIError as exc:
+            apply_api_field_errors(form, exc)
             handle_api_error(request, exc)
 
     request_total = _customer_request_count(request, client)
@@ -2004,7 +2140,6 @@ def customer_profile(request, *, home_dashboard=False):
         request,
         "customer/profile.html",
         profile=profile,
-        profile_picker_catalogue=world_geography(),
         profile_picker_today=timezone.localdate().isoformat(),
         form=form,
         role="customer",
@@ -2097,6 +2232,7 @@ def artisan_profile(request):
                 return redirect(next_target)
             return redirect("artisan-profile")
         except APIError as exc:
+            apply_api_field_errors(form, exc)
             handle_api_error(request, exc)
 
     requests, request_total = _artisan_request_preview(request, client, limit=2)
@@ -2115,7 +2251,6 @@ def artisan_profile(request):
         request,
         "artisan/profile.html",
         profile=profile,
-        profile_picker_catalogue=world_geography(),
         profile_picker_today=timezone.localdate().isoformat(),
         form=form,
         role="artisan",
@@ -2141,15 +2276,96 @@ def artisan_profile(request):
     return response
 
 
-def _promotion_application_catalog(client):
+def _promotion_institution_rows(client):
+    """Raw institution rows for the promotion form, cached 10 min."""
+    from .catalogue_source import _cached
+
+    def build():
+        _, payload, _ = client.get("/services/institutions/")
+        return extract_items(payload)
+
+    return _cached("promotion_institution_rows", build)
+
+
+def _promotion_location_rows(client):
+    """Raw location rows for the promotion form, cached 10 min.
+
+    The create page needs these for the supported country/state pairs (the
+    select must offer only places the marketplace actually holds), but the
+    browser never receives them: the area select is filled from the slim
+    picker JSON instead.
+    """
+    from .catalogue_source import _cached
+
+    def build():
+        # One request each: the old 1,000-row page silently truncated a
+        # marketplace with more than 1,000 places.
+        return extract_items(
+            {"results": _catalog_endpoint_items(None, client, "/services/locations/")}
+        )
+
+    return _cached("promotion_location_rows", build)
+
+
+def _promotion_picker_rows(client):
+    """Both big lists together for POST/edit and the picker JSON."""
+    return {
+        "institutions": _promotion_institution_rows(client),
+        "locations": _promotion_location_rows(client),
+    }
+
+
+def _promotion_pairs_from_locations(rows):
+    return {
+        (
+            str(item.get("country") or "").strip(),
+            str(item.get("state") or "").strip(),
+        )
+        for item in rows
+        if isinstance(item, dict)
+        and str(item.get("country") or "").strip()
+        and str(item.get("state") or "").strip()
+    }
+
+
+def _promotion_countries_from_locations(rows):
+    return sorted(
+        {
+            str(item.get("country") or "").strip()
+            for item in rows
+            if isinstance(item, dict) and str(item.get("country") or "").strip()
+        },
+        key=str.casefold,
+    )
+
+
+def _promotion_pairs_from_index():
+    """Country/state pairs from the geography index (fast, already cached).
+
+    Used on the create page, which no longer downloads the location list: the
+    API revalidates every pair on submit, exactly as the form's help text says.
+    """
+    from .catalogue_source import geography_index
+
+    pairs = set()
+    countries_map = (geography_index() or {}).get("countries") or {}
+    for country, states in countries_map.items():
+        c = str(country).strip()
+        for state in states or []:
+            s = str(state).strip()
+            if c and s:
+                pairs.add((c, s))
+    return pairs
+
+
+def _promotion_base_catalog(client):
+    """The three reads every visit needs: eligibility, own offerings, own applications."""
     _, eligibility, _ = client.get("/promotions/eligibility/")
-    _, institutions_payload, _ = client.get("/services/institutions/")
-    _, locations_payload, _ = client.get(
-        "/services/locations/", params={"limit": 1000, "offset": 0}
-    )
-    _, offerings_payload, _ = client.get(
-        "/services/get_artisan_services/", params={"limit": 1000, "offset": 0}
-    )
+    offerings_payload = {
+        "results": _catalog_endpoint_items(
+            None, client, "/services/get_artisan_services/"
+        )
+    }
     _, applications_payload, _ = client.get(
         "/promotions/applications/", params={"limit": 100, "offset": 0}
     )
@@ -2159,38 +2375,80 @@ def _promotion_application_catalog(client):
             if isinstance(eligibility, dict)
             else {"eligible": False, "requirements": []}
         ),
-        "institutions": (
-            institutions_payload
-            if isinstance(institutions_payload, list)
-            else extract_items(institutions_payload)
-        ),
-        "locations": extract_items(locations_payload),
         "offerings": extract_items(offerings_payload),
         "applications": extract_items(applications_payload),
     }
 
 
+@require_GET
+def promotion_picker(request):
+    """Institution + location options for the promotion form as JSON.
+
+    The page embeds none of this any more (thousands of rows made the form
+    megabytes and the render seconds); the form fills its selects the first
+    time a target group is shown. Ten-minute cache on both sides.
+    """
+    from .forms import institution_choice_label, location_choice_label
+
+    rows = _promotion_picker_rows(APIClient(request))
+    body = {
+        "institutions": [
+            {"id": str(item["id"]), "label": institution_choice_label(item)}
+            for item in rows["institutions"]
+            if isinstance(item, dict) and item.get("id")
+        ],
+        "locations": [
+            {"id": str(item["id"]), "label": location_choice_label(item)}
+            for item in rows["locations"]
+            if isinstance(item, dict) and item.get("id")
+        ],
+    }
+    response = JsonResponse(body)
+    response["Cache-Control"] = "public, max-age=600"
+    return response
+
+
 @api_guard
 def promotion_applications(request):
     client = APIClient(request)
-    try:
-        catalog = _promotion_application_catalog(client)
-    except APIError as exc:
-        handle_api_error(request, exc)
-        return redirect("artisan-profile")
 
     application_id = str(
         request.GET.get("application") or request.POST.get("application_id") or ""
     ).strip()
     selected_application = None
-    if application_id:
-        try:
+
+    try:
+        if application_id:
             _, selected_application, _ = client.get(
                 replace_path("/promotions/applications/{pk}/", pk=application_id)
             )
-        except APIError as exc:
-            handle_api_error(request, exc)
-            return redirect("promotion-applications")
+        catalog = _promotion_base_catalog(client)
+        # Institution rows (the slow register) are needed only to validate or
+        # to re-render a form that already holds values. Location rows still
+        # come to a create page — they define the supported country/state
+        # pairs — but only the slim pairs are rendered; the area select itself
+        # stays empty until the browser fills it from the picker JSON.
+        if request.method == "POST" or selected_application:
+            institutions = _promotion_institution_rows(client)
+            locations = _promotion_location_rows(client)
+            lazy_targets = False
+        else:
+            institutions = []
+            locations = _promotion_location_rows(client)
+            lazy_targets = True
+    except APIError as exc:
+        handle_api_error(request, exc)
+        return redirect("artisan-profile" if not application_id else "promotion-applications")
+
+    if application_id and not isinstance(selected_application, dict):
+        return redirect("promotion-applications")
+
+    if locations:
+        state_pairs = _promotion_pairs_from_locations(locations)
+        countries = _promotion_countries_from_locations(locations)
+    else:
+        state_pairs = _promotion_pairs_from_index()
+        countries = sorted({c for c, _ in state_pairs}, key=str.casefold)
 
     initial = {}
     if isinstance(selected_application, dict):
@@ -2216,9 +2474,12 @@ def promotion_applications(request):
     form = PromotionApplicationForm(
         request.POST or None,
         initial=initial if request.method != "POST" else None,
-        institutions=catalog["institutions"],
-        locations=catalog["locations"],
+        institutions=institutions,
+        locations=locations,
         offerings=catalog["offerings"],
+        state_pairs=state_pairs,
+        countries=countries,
+        lazy_targets=lazy_targets,
     )
 
     if (
@@ -2821,6 +3082,10 @@ def artisans(request):
             ("available_anywhere", 10),
         )
     }
+    if "country" not in request.GET:
+        # Every country dropdown in the product opens on Nigeria. An explicit
+        # ?country= (empty) still means "All countries" for anyone who clears it.
+        filters["country"] = "Nigeria"
     try:
         offset = max(0, int(query_value("offset", 10) or "0"))
     except (TypeError, ValueError):
@@ -2957,7 +3222,6 @@ def artisans(request):
         categories=categories,
         institutions=institutions,
         locations=location_items,
-        discovery_geography=geography,
         country_options=country_options,
         state_options=state_options,
         area_options=area_options,
@@ -3805,13 +4069,22 @@ def conversation_detail(request, conversation_id):
                 try:
                     if action == "pay_transfer":
                         # Ask the provider for a dedicated account and show it here.
+                        # "renew" means the last account closed: the provider will
+                        # not reuse that reference, so the API retires it and mints
+                        # a new one against a fresh reference.
+                        renew = str(request.POST.get("renew") or "").strip() in {"1", "true"}
+                        if renew:
+                            messages.info(
+                                request,
+                                "Getting a fresh transfer account. Nothing has been charged.",
+                            )
                         client.post(
                             replace_path(
                                 "/payments/{payment_id}/bank-transfer/",
                                 payment_id=payment_id,
                             ),
-                            {},
-                            idempotency_key=f"{key}-account",
+                            {"renew": renew},
+                            idempotency_key=f"{key}-account{'-renew' if renew else ''}",
                         )
                     else:
                         client.post(
@@ -4173,11 +4446,17 @@ ARTISAN_REQUEST_FILTERS = (
     "urgency",
     "q",
 )
-RESPONDER_FILTERS = ("q", "state", "area", "min_rating", "ordering")
+RESPONDER_FILTERS = ("q", "ordering")
 
 
 def _request_form_catalog(request, client):
-    return _artisan_service_catalog(request, client)
+    """Categories and services only.
+
+    The request form submits a country, state and area; the API resolves that to
+    a location row (creating it when the place is new), so the browser never needs
+    the marketplace's thousands of location ids.
+    """
+    return _artisan_service_catalog(request, client, include_locations=False)
 
 
 def _request_geography(locations):
@@ -4197,6 +4476,57 @@ def _request_geography(locations):
     return data
 
 
+REQUEST_CATALOGUE_CACHE_KEY = "frontend:ui:request-catalogue"
+REQUEST_CATALOGUE_CACHE_SECONDS = 600
+REQUEST_CATALOGUE_SESSION_KEY = "frontend:ui:request-catalogue:built"
+
+
+@require_GET
+def ui_request_catalogue(request):
+    """Picker data for the request form, fetched once and cached by the browser.
+
+    It used to be inlined into the page: every visit shipped ~7 MB of JSON that
+    the browser does not need until a picker is opened. Nothing here depends on
+    the signed-in person, so it is built once, kept for ten minutes and served
+    with its own cache headers.
+    """
+    from django.core.cache import cache
+
+    payload = cache.get(REQUEST_CATALOGUE_CACHE_KEY)
+    built_ok = True
+    if not isinstance(payload, dict):
+        client = APIClient(request)
+        catalog = _request_form_catalog(request, client)
+        form = _service_request_form(request, catalog)
+        payload = _request_picker_catalogue(form)
+        built_ok = bool(catalog.get("ok", True)) and bool(
+            payload.get("categories") or payload.get("services")
+        )
+        if built_ok:
+            cache.set(REQUEST_CATALOGUE_CACHE_KEY, payload, REQUEST_CATALOGUE_CACHE_SECONDS)
+        else:
+            # The API did not answer. Cache nothing, and tell the browser not to
+            # keep this answer either: a ten-minute cached empty catalogue made
+            # the request form look unconfigured long after the API was back.
+            cache.delete(REQUEST_CATALOGUE_CACHE_KEY)
+    payload = dict(payload)
+    # "today" is the marketplace's date, not the browser's: refresh it on every
+    # serve so a cached payload never offers yesterday to the calendar.
+    payload["today"] = timezone.localdate().isoformat()
+    if not built_ok:
+        payload["error"] = (
+            "The marketplace catalogue could not be loaded just now. "
+            "Reload the page in a moment."
+        )
+    response = JsonResponse(payload)
+    response["Cache-Control"] = (
+        f"private, max-age={REQUEST_CATALOGUE_CACHE_SECONDS}"
+        if built_ok
+        else "no-store"
+    )
+    return response
+
+
 def _request_picker_catalogue(form):
     """Catalogue data for the request pickers (categories, services, locations)."""
     services = []
@@ -4210,28 +4540,14 @@ def _request_picker_catalogue(form):
         for value, label in form.fields["category_name"].choices
         if value
     ]
-    from .profile_catalogue import all_institutions
-
     return {
         "categories": categories,
         "services": services,
         "locations": form.location_records,
-        "geography": _request_geography(form.location_records),
-        # Optional "closest institution" picker: same catalogue, ordering and
-        # filter semantics as the artisan service form (Nigeria first,
-        # alphabetical, reduced by any chosen geography).
-        "institutions": [
-            {
-                "id": str(row.get("source_id") or ""),
-                "name": str(row.get("name") or ""),
-                "abbreviation": next(iter(row.get("abbreviations") or []), ""),
-                "country": str(row.get("country") or ""),
-                "state": str(row.get("state") or ""),
-                "area": str(row.get("area") or ""),
-            }
-            for row in all_institutions()
-            if isinstance(row, dict) and row.get("source_id")
-        ],
+        # The world geography list (~2.4 MB) and the institution register
+        # (~5 MB) are NOT shipped here. The pickers fetch the geography from its
+        # static file and search institutions fifty at a time, so this payload
+        # stays small and a page never waits for data it may not open.
         # The browser clock can sit in another time zone; the marketplace's
         # "today" is what the API validates against, so ship it with the data.
         "today": timezone.localdate().isoformat(),
@@ -4413,8 +4729,8 @@ def service_requests(request):
         "customer/requests.html",
         requests=items,
         form=form,
-        request_catalogue=_request_picker_catalogue(form),
         catalog_ready=(len(form.fields["service_name"].choices) > 1),
+        catalog_unreachable=not catalog.get("ok", True),
         request_total=total,
         next_url=(
             _query_url(base_url, {"offset": offset + SERVICE_REQUEST_PAGE_SIZE})
@@ -4430,48 +4746,80 @@ def service_requests(request):
 
 
 def _load_service_request_responses(request, client, pk):
+    """The artisan working on this request, told truthfully.
+
+    A request gets one working room: the first eligible artisan to take it opens
+    the conversation, and every later offer is settled inside that room. The page
+    used to ask for a "/responses/" collection the API has never had, so it
+    always showed "No artisan responses yet" -- and its state/area/rating
+    filters offered nothing to filter. This reads the real room instead.
+    """
     filters = {
         key: str(request.GET.get(key, "") or "").strip() for key in RESPONDER_FILTERS
     }
-    filters["ordering"] = filters.get("ordering") or "newest"
-    offset = _safe_page_offset(request.GET.get("response_offset"))
-    params = {key: value for key, value in filters.items() if value}
-    params.update({"limit": SERVICE_REQUEST_PAGE_SIZE, "offset": offset})
+    filters["ordering"] = "oldest" if filters.get("ordering") == "oldest" else "newest"
+    responders = []
     try:
         _, payload, _ = client.get(
-            replace_path("/services/requests/{pk}/responses/", pk=pk),
-            params=params,
+            "/conversations/inbox/",
+            params={"service_request": pk, "limit": 20},
         )
-        items = extract_items(payload)
-        total = _count_from_payload(payload)
+        conversations = extract_items(payload)
     except APIError as exc:
-        # The marketplace API does not expose responses for every request (yet);
-        # a missing or forbidden collection simply means "nobody to show" and
-        # must not replace the request page with a global error notice.
         if exc.status_code not in {403, 404}:
             handle_api_error(request, exc)
-        items, total = [], 0
-    path = reverse("service-request-responders", kwargs={"pk": pk})
-    pager_base = {**filters}
-    previous_url = (
-        _query_url(
-            path,
+        conversations = []
+
+    for conversation in conversations:
+        if not isinstance(conversation, dict):
+            continue
+        artisan = conversation.get("counterparty")
+        if not isinstance(artisan, dict) or not artisan.get("role", "artisan") == "artisan":
+            artisan = next(
+                (
+                    person
+                    for person in conversation.get("participants") or []
+                    if isinstance(person, dict) and person.get("role") == "artisan"
+                ),
+                None,
+            )
+        if not isinstance(artisan, dict):
+            continue
+        name = " ".join(
+            part for part in (artisan.get("first_name"), artisan.get("last_name")) if part
+        ).strip()
+        room_state = str(conversation.get("state") or "").upper()
+        responders.append(
             {
-                **pager_base,
-                "response_offset": max(0, offset - SERVICE_REQUEST_PAGE_SIZE),
-            },
+                "id": conversation.get("id"),
+                "status": "BOOKED" if room_state == "BOOKED" else "INTERESTED",
+                "responded_at": conversation.get("created_at"),
+                "conversation_id": conversation.get("id"),
+                "artisan": {
+                    "id": artisan.get("id"),
+                    "name": name,
+                    "business_name": artisan.get("business_name") or "",
+                    "profile_photo": artisan.get("profile_photo"),
+                    "service_label": artisan.get("service_label") or "",
+                    "role": "artisan",
+                },
+            }
         )
-        if offset
-        else ""
+
+    query = filters.get("q", "").casefold()
+    if query:
+        responders = [
+            item
+            for item in responders
+            if query
+            in f"{item['artisan']['name']} {item['artisan']['business_name']}".casefold()
+        ]
+    responders.sort(
+        key=lambda item: str(item.get("responded_at") or ""),
+        reverse=filters["ordering"] == "newest",
     )
-    next_url = (
-        _query_url(
-            path, {**pager_base, "response_offset": offset + SERVICE_REQUEST_PAGE_SIZE}
-        )
-        if offset + SERVICE_REQUEST_PAGE_SIZE < total
-        else ""
-    )
-    return items, total, filters, previous_url, next_url
+    # One room per request: there is nothing to page through.
+    return responders, len(responders), filters, "", ""
 
 
 @api_guard
@@ -4603,7 +4951,6 @@ def service_request_detail(request, pk, focus_responders=False):
         "customer/request_detail.html",
         item=item,
         form=form,
-        request_catalogue=_request_picker_catalogue(form),
         responders=responders,
         responder_total=responder_total,
         responder_filters=responder_filters,
@@ -4728,12 +5075,110 @@ def artisan_requests(request):
 
 
 def institution_catalogue(request):
-    """Search frontend-owned JSON; location values are optional narrowing filters."""
+    """Search the API-owned institution register; location filters are optional."""
     if request.method != "GET":
         return JsonResponse({"detail": "Use GET."}, status=405)
     from .profile_catalogue import catalogue_page
 
-    return JsonResponse(catalogue_page(request.GET))
+    response = JsonResponse(catalogue_page(request.GET))
+    response["Cache-Control"] = "public, max-age=600"
+    return response
+
+
+#: What a Django ``<slug:...>`` converter accepts. A country file whose name
+#: falls outside this cannot be routed, so it is skipped instead of raising.
+_GEOGRAPHY_SLUG = re.compile(r"^[a-z0-9][-a-z0-9_]*$")
+#: The path the area files are published on. Used only when the URL name is
+#: missing from the URLconf, so the endpoint still answers instead of 500-ing.
+_GEOGRAPHY_COUNTRY_PATH = "/catalogue/geography/{slug}.json"
+
+
+_ROUTE_WARNING_SHOWN = False
+
+
+@lru_cache(maxsize=512)
+def _geography_country_url(slug):
+    """URL for one country's area file, or ``None`` when it cannot be routed."""
+    global _ROUTE_WARNING_SHOWN
+    try:
+        return reverse("catalogue-geography-country", args=[slug])
+    except NoReverseMatch:
+        # A partially updated copy of urls.py can lose the route name while the
+        # view that lists the files still exists. Serving the documented path is
+        # better than taking every picker on the site down with a 500. Said once,
+        # not 250 times.
+        if not _ROUTE_WARNING_SHOWN:
+            _ROUTE_WARNING_SHOWN = True
+            logger.warning(
+                "catalogue-geography-country is missing from the URLconf; "
+                "serving %s instead. Add the route back to frontend/urls.py.",
+                _GEOGRAPHY_COUNTRY_PATH.format(slug="<country>"),
+            )
+        return _GEOGRAPHY_COUNTRY_PATH.format(slug=slug)
+
+
+@require_GET
+def catalogue_geography_index(request):
+    """Country -> states for the pickers, with this app's own area files.
+
+    The catalogue belongs to the API; this route keeps the browser on one origin
+    while serving the small index the pickers need (~80 KB).
+
+    This must never raise. Every location picker on the site loads it, so one
+    unroutable entry used to take the whole set of pickers down with a 500 that
+    looks, from the browser, exactly like "the frontend cannot reach the API".
+    """
+    from .catalogue_source import geography_index, last_error
+
+    payload = geography_index() or {}
+    files = {}
+    skipped = []
+    for country, path in (payload.get("files") or {}).items():
+        # The API publishes these as URLs with a trailing slash
+        # (.../countries/afghanistan/?v=123) while the local data folder has
+        # plain file names (world-geography/afghanistan.json). Strip the query
+        # and the trailing slash down to the slug (taking the raw text after
+        # the last slash used to yield "" and skipped every country in HTTP
+        # mode), then carry the API's content stamp on to this app's own URL
+        # so republished data invalidates the browser's copy too.
+        raw = str(path)
+        query = f"?{raw.split('?', 1)[1]}" if "?" in raw else ""
+        raw_path = raw.split("?", 1)[0].strip().rstrip("/")
+        slug = raw_path.rsplit("/", 1)[-1].removesuffix(".json").strip().lower()
+        url = _geography_country_url(slug) if _GEOGRAPHY_SLUG.match(slug) else None
+        if url is None:
+            skipped.append(country)
+            continue
+        files[country] = f"{url}{query}"
+    if skipped:
+        logger.warning(
+            "geography index: %s countries have no usable file name (first: %s)",
+            len(skipped),
+            ", ".join(skipped[:5]),
+        )
+    countries = payload.get("countries") or {}
+    body = {"countries": countries, "files": files}
+    failure = last_error()
+    if failure and not countries:
+        # Say why the pickers are empty instead of letting an empty list look
+        # like a country that has no states.
+        body["error"] = "The location catalogue could not be loaded."
+        body["detail"] = failure.get("error", "")
+    response = JsonResponse(body)
+    response["Cache-Control"] = "public, max-age=86400"
+    return response
+
+
+@require_GET
+def catalogue_geography_country(request, slug):
+    from .catalogue_source import country_areas
+
+    payload = country_areas(slug)
+    if not payload:
+        return JsonResponse({"detail": "Not found."}, status=404)
+    response = JsonResponse(payload)
+    response["Cache-Control"] = "public, max-age=86400"
+    return response
 
 
 def _matched_request_age_label(seconds):
@@ -4751,9 +5196,7 @@ def _matched_request_age_label(seconds):
 
 
 def _matched_request_picker_catalogue(request, client):
-    from .geography import world_geography
-
-    result = {"geography": world_geography()}
+    result = {}
     try:
         _, payload, _ = client.get("/services/service_cat/")
         result["services"] = extract_items(payload)
@@ -4766,17 +5209,40 @@ def _matched_request_picker_catalogue(request, client):
 # ---------------- Artisan services ----------------
 
 
-def _catalog_endpoint_items(request, client, endpoint):
+#: One request asks for everything at once. The API's limit is unbounded, so a
+#: five-thousand-row location table is no longer fetched a hundred rows at a time
+#: -- that walk cost twenty seconds, sixty requests and the whole anonymous rate
+#: limit on every visit to the request page.
+CATALOGUE_PAGE_SIZE = 10000
+
+
+def _catalog_endpoint_items(request, client, endpoint, *, ok=None):
+    """Every row of one catalogue endpoint.
+
+    ``ok`` is a one-item list the caller passes in to learn whether the fetch
+    failed. A failed read and an empty catalogue are different things: one means
+    "try again in a moment", the other means "there is nothing to pick". Saying
+    the wrong one is how an unreachable API looked like an unconfigured
+    marketplace.
+    """
     items = []
     offset = 0
-    limit = 100
-    for _page_number in range(100):
+    limit = CATALOGUE_PAGE_SIZE
+    if ok is None:
+        ok = [True]
+    for _page_number in range(20):
         try:
             _, payload, _ = client.get(
                 endpoint, params={"limit": limit, "offset": offset}
             )
         except APIError as exc:
-            handle_api_error(request, exc)
+            # One message per page, not one per catalogue endpoint.
+            if request is not None and not getattr(
+                request, "_catalog_error_reported", False
+            ):
+                request._catalog_error_reported = True
+                handle_api_error(request, exc)
+            ok[0] = False
             return items
         page_items = extract_items(payload)
         items.extend(page_items)
@@ -4789,22 +5255,56 @@ def _catalog_endpoint_items(request, client, endpoint):
     return items
 
 
-def _artisan_service_catalog(request, client, *, include_institutions=False):
+#: Categories and services change with a release, not with a click. Keeping them
+#: for a few minutes removes two API calls from every form page.
+CATALOGUE_CACHE_SECONDS = 300
+
+
+def _artisan_service_catalog(
+    request, client, *, include_institutions=False, include_locations=True
+):
     """Catalogue data shared by the service and request forms.
 
     Institutions are only needed by the "My services" picker, so they are fetched
-    on request; other callers keep their existing API footprint.
+    on request. The location table is only needed where a saved location id is
+    written back (artisan service coverage, promotions); the request form accepts
+    a country, state and area and lets the API resolve the row, so it does not
+    ask for thousands of locations it never reads.
     """
-    endpoints = [
-        ("categories", "/services/categories/"),
-        ("services", "/services/service_cat/"),
-        ("locations", "/services/locations/"),
-    ]
+    from django.core.cache import cache
+
+    endpoints = [("categories", "/services/categories/"), ("services", "/services/service_cat/")]
+    if include_locations:
+        endpoints.append(("locations", "/services/locations/"))
     if include_institutions:
         endpoints.append(("institutions", "/services/institutions/"))
-    catalog = {"institutions": []}
+
+    catalog = {"institutions": [], "locations": [], "ok": True}
+    # Categories and services change with a release; locations change when a new
+    # place is first used, so they are kept for a minute, not five.
+    # Ten minutes, like the rest: the pickers that still need every location id
+    # (artisan service coverage, promotions) then load once, not on every visit.
+    ttl_by_key = {
+        "categories": CATALOGUE_CACHE_SECONDS,
+        "services": CATALOGUE_CACHE_SECONDS,
+        "locations": CATALOGUE_CACHE_SECONDS,
+    }
     for key, endpoint in endpoints:
-        catalog[key] = _catalog_endpoint_items(request, client, endpoint)
+        cache_key = f"frontend:catalog:{endpoint}"
+        cached = cache.get(cache_key) if key in ttl_by_key else None
+        if isinstance(cached, list):
+            catalog[key] = cached
+            continue
+        ok = [True]
+        catalog[key] = _catalog_endpoint_items(request, client, endpoint, ok=ok)
+        if not ok[0]:
+            catalog["ok"] = False
+            continue
+        # Never cache an empty read: an unreachable API answered, and the next
+        # visit must try again instead of showing an empty marketplace for five
+        # minutes.
+        if key in ttl_by_key and catalog[key]:
+            cache.set(cache_key, catalog[key], ttl_by_key[key])
     return catalog
 
 
@@ -4846,6 +5346,12 @@ def _artisan_service_form_initial(item):
         "starting_price": item.get("starting_price", ""),
     }
     location = item.get("location")
+    # A NULL-location offering is the anywhere promise, and a located offering
+    # may now carry the same promise via available_anywhere — the switch is on
+    # for either; it starts off only for a plain area offering.
+    initial["available_anywhere"] = location is None or bool(
+        item.get("available_anywhere")
+    )
     if isinstance(location, dict) and any(
         str(location.get(key) or "").strip() for key in ("country", "state", "area")
     ):
@@ -4859,15 +5365,16 @@ def _artisan_service_form_initial(item):
     return initial
 
 
-def _artisan_service_payload(cleaned_data):
-    resolved_location = cleaned_data.get("resolved_location")
+def _artisan_service_payload(cleaned_data, location, anywhere=False):
     payload = {
         # The API resolves service_name and derives category_name from that service.
-        # A null location is the existing general-offering/Anywhere contract; a
-        # catalogue {country, state, area} triple is resolved (and registered on
-        # first use) by the API.
+        # A null location is the general-offering/Anywhere contract; a catalogue
+        # {country, state, area} triple is resolved (and registered on first use)
+        # by the API. `available_anywhere` rides on a located row so one form
+        # fills ONE offering that promises both the place and everywhere.
         "service_name": cleaned_data["service_name"],
-        "location": resolved_location,
+        "location": location,
+        "available_anywhere": bool(anywhere) and location is not None,
     }
     starting_price = cleaned_data.get("starting_price")
     if starting_price is not None:
@@ -4876,10 +5383,107 @@ def _artisan_service_payload(cleaned_data):
     return payload
 
 
+def _coverage_label(location, anywhere=False):
+    if not location:
+        return "everywhere"
+    place = ", ".join(
+        part for part in (location.get("area"), location.get("state"), location.get("country")) if part
+    )
+    if anywhere:
+        return f"everywhere and {place}"
+    return place
+
+
+def _save_artisan_service_coverages(client, form, wanted, editing_item, editing_id):
+    """Save the single coverage the form asked for; report exactly what happened.
+
+    The form resolves to ONE offering: an anywhere row (location None), one
+    named place, or a located row that also carries the everywhere promise —
+    never two rows for one form. Returns (saved, skipped, failed): the label
+    written now, the label the API reported as already present, and
+    (label, APIError) when the API refused.
+    """
+    saved, skipped, failed = [], [], []
+    price_cleaned = form.cleaned_data
+
+    target = wanted[0] if wanted else None
+    anywhere_flag = bool(target) and bool(
+        price_cleaned.get("anywhere_with_location")
+    )
+    label = _coverage_label(target, anywhere_flag)
+
+    if editing_id and isinstance(editing_item, dict):
+        # One row in, one row out: the PATCH carries the full toggle state
+        # (location None = anywhere, located + flag = both, located = place).
+        path = replace_path("/services/get_artisan_services/{pk}/", pk=editing_id)
+        try:
+            client.patch(
+                path, _artisan_service_payload(price_cleaned, target, anywhere_flag)
+            )
+            saved.append(label)
+        except APIError as exc:
+            if _offering_already_exists(exc):
+                skipped.append(label)
+            else:
+                failed.append((label, exc))
+        return saved, skipped, failed
+
+    if not isinstance(target, dict) and target is not None:
+        return saved, skipped, failed
+    try:
+        client.post(
+            "/services/get_artisan_services/",
+            _artisan_service_payload(price_cleaned, target, anywhere_flag),
+        )
+        saved.append(label)
+    except APIError as exc:
+        if _offering_already_exists(exc):
+            skipped.append(label)
+        else:
+            failed.append((label, exc))
+    return saved, skipped, failed
+
+
+def _service_saved_message(saved, skipped, editing_id):
+    """One sentence that names the coverage and what really happened to it.
+
+    One form is one write, so a refusal lands in ``failed`` on the save helper
+    and is shown by the caller as the API's own error — never as a "half saved"
+    sentence that would claim part of the service exists.
+    """
+    parts = []
+    if saved:
+        verb = "Updated" if editing_id else "Added"
+        parts.append(f"{verb} for {_join_labels(saved)}")
+    if skipped:
+        parts.append(f"already on your profile: {_join_labels(skipped)}")
+    text = "; ".join(parts)
+    return (text.rstrip(".") + ".") if text else "Nothing to change."
+
+
+def _join_labels(labels):
+    unique = [label for label in dict.fromkeys(labels) if label]
+    if not unique:
+        return "nowhere"
+    if len(unique) == 1:
+        return unique[0]
+    return ", ".join(unique[:-1]) + " and " + unique[-1]
+
+
+def _offering_already_exists(exc):
+    """True when the API refused because this exact offering is already saved."""
+    payload = getattr(exc, "payload", None)
+    blob = str(payload) if payload is not None else str(getattr(exc, "user_message", ""))
+    return "already offer this service" in blob.casefold()
+
+
 @api_guard
 def artisan_services(request):
     client = APIClient(request)
-    catalog = _artisan_service_catalog(request, client)
+    # Coverage is a country/state/area triple validated against the geographic
+    # catalogue, so this page never needs the marketplace's thousands of
+    # location rows -- asking for them cost sixty API calls on every cold page.
+    catalog = _artisan_service_catalog(request, client, include_locations=False)
     try:
         _, payload, _ = client.get("/services/get_artisan_services/")
         items = extract_items(payload)
@@ -4942,29 +5546,31 @@ def artisan_services(request):
     )
 
     if request.method == "POST" and form.is_valid():
+        # One form is one offering: an anywhere row, one named place, or one
+        # located row carrying the everywhere promise — never two rows.
+        wanted = list(form.cleaned_data.get("resolved_locations") or [])
         try:
-            service_payload = _artisan_service_payload(form.cleaned_data)
-            if editing_id:
-                path = replace_path(
-                    "/services/get_artisan_services/{pk}/", pk=editing_id
-                )
-                client.patch(path, service_payload)
-                messages.success(request, "Service details updated.")
-            else:
-                client.post("/services/get_artisan_services/", service_payload)
-                messages.success(request, "Service added to your artisan profile.")
-            return redirect("artisan-services")
-        except APIError as exc:
-            handle_api_error(request, exc)
+            saved, skipped, failed = _save_artisan_service_coverages(
+                client, form, wanted, editing_item, editing_id
+            )
         except ValueError as exc:
             form.add_error("location_id", str(exc))
+        else:
+            if failed:
+                # One write, nothing landed: show the API's reason on the form.
+                exc = failed[0][1]
+                apply_api_field_errors(form, exc)
+                handle_api_error(request, exc)
+            else:
+                if saved or skipped:
+                    messages.success(
+                        request, _service_saved_message(saved, skipped, editing_id)
+                    )
+                return redirect("artisan-services")
     elif request.method == "POST":
         messages.error(
             request, "Please correct the highlighted fields before saving this service."
         )
-
-    from .geography import world_geography
-    from .profile_catalogue import all_institutions
 
     return page(
         request,
@@ -4973,24 +5579,14 @@ def artisan_services(request):
         form=form,
         editing_item=editing_item,
         service_catalog=catalog["services"],
-        # Same data source as the public discovery filters: the worldwide
-        # geographic catalogue and the institution catalogue (alphabetical,
-        # Nigeria first when no geography is chosen).
-        geography_records=world_geography(),
-        institutions=[
-            {
-                "id": str(row.get("source_id") or ""),
-                "name": str(row.get("name") or ""),
-                "abbreviation": next(
-                    iter(row.get("abbreviations") or []), ""
-                ),
-                "country": str(row.get("country") or ""),
-                "state": str(row.get("state") or ""),
-                "area": str(row.get("area") or ""),
-            }
-            for row in all_institutions()
-            if isinstance(row, dict) and row.get("source_id")
-        ],
+        # An empty category list must say which empty it is: the marketplace has
+        # nothing configured, or the API could not be reached. A bare picker
+        # looks like a broken page either way.
+        catalog_ready=bool(catalog["services"]),
+        catalog_unreachable=not catalog.get("ok", True),
+        # The institution register (5 MB) and the world geography list
+        # (2.4 MB) are not shipped with this page; the pickers page through
+        # /catalogue/institutions/ and fetch the geography file on demand.
         anywhere_value=ANYWHERE_LOCATION_VALUE,
         geographic_value=GEOGRAPHIC_COVERAGE_VALUE,
         service_count=service_count,

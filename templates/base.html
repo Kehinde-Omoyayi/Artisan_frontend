@@ -16,6 +16,8 @@
   <link rel="stylesheet" href="{% asset 'css/brand-overrides.css' %}">
 <link rel="stylesheet" href="{% asset 'css/site-experience.css' %}">
 <link rel="stylesheet" href="{% asset 'css/bookings.css' %}">
+<link rel="stylesheet" href="{% asset 'css/dropdown-system.css' %}">
+{% block extra_css %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}" data-tour-role="{{ tour_role|default:nav_role|default:'guest' }}" data-tour-user="{{ tour_user_key|default:'guest' }}" data-tour-auto="{% if tour_auto_offer %}true{% else %}false{% endif %}" data-tour-manager="{% if platform_manager %}true{% else %}false{% endif %}" data-payment-notice-auto="{% if payment_notice_auto_offer %}true{% else %}false{% endif %}">
 <div class="experience-background" aria-hidden="true"><i></i><i></i></div>
@@ -127,7 +129,9 @@
 {% if include_phone_fields %}<script src="{% static 'js/vendor/libphonenumber-js-1.13.15.max.js' %}"></script>{% endif %}
 <script src="{% asset 'js/geography-controls.js' %}"></script>
 {% endif %}
+<script src="{% asset 'js/geography-source.js' %}"></script>
 <script src="{% asset 'js/site.js' %}"></script>
+<script src="{% asset 'js/dropdown-system.js' %}"></script>
 <script src="{% asset 'js/booking-events.js' %}"></script>
 <script src="{% asset 'js/promotion-tracking.js' %}" defer></script>
 {% page_script page_js_path %}

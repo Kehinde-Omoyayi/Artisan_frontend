@@ -25,7 +25,9 @@
     }
   };
 
-  const data = readCatalogue();
+  /* The catalogue is fetched, not inlined: the page paints at once and the
+     pickers fill themselves from a response the browser caches. */
+  const START = (data) => {
   const locations = data.locations || [];
   const TODAY = data.today || '';
   const services = (data.services || []).filter((item) => item && item.name);
@@ -55,14 +57,22 @@
     category: inputs.category.value || '',
     service: inputs.service.value || '',
     institution: '',
-    country: inputs.country ? inputs.country.value : '',
+    country: inputs.country ? inputs.country.value : 'Nigeria',
     state: inputs.state ? inputs.state.value : '',
     area: inputs.area ? inputs.area.value : '',
     date: inputs.date ? inputs.date.value : '',
     urgency: inputs.urgency ? (inputs.urgency.value || 'NORMAL') : 'NORMAL',
   };
+  if (inputs.country && !inputs.country.value) inputs.country.value = state.country;
 
-  const institutions = (data.institutions || []).filter((item) => item && item.id && item.name);
+  /* Institutions are searched on the server, fifty at a time. The full list is
+     several megabytes, and nothing that size belongs in a page (or in a first
+     keystroke). Same for the world geography list: it is fetched from its
+     static file the first time a location picker is opened. */
+  const institutionsUrl = root.dataset.institutionsUrl || '';
+  const geographyUrl = root.dataset.geographyUrl || '';
+  const institutionRows = new Map();
+  const institutionQuery = { q: '', offset: 0, count: 0 };
 
   const URGENCY = [
     { value: 'LOW', label: 'Low' },
@@ -85,9 +95,42 @@
     });
   };
 
+  let geographyLoading = false;
+  let geographyReady = false;
+  const loadAreas = () => {
+    const country = inputs.country ? inputs.country.value : '';
+    if (!country || !window.GeographySource) return;
+    window.GeographySource.areas(geographyUrl, country)
+      .then(() => renderArea())
+      .catch(() => {});
+  };
+  const ensureGeography = (key) => {
+    if (!['country', 'state', 'area'].includes(key) || !geographyUrl) return;
+    if (!geographyReady) {
+      if (geographyLoading) return;
+      geographyLoading = true;
+      // The index carries country -> states (~80 KB); each country's areas are
+      // fetched only when they are actually needed.
+      window.GeographySource.load(geographyUrl)
+        .then((source) => {
+          geography = source.tree || {};
+          geographyReady = true;
+          renderCountry();
+          renderState();
+          renderArea();
+          if (key === 'area') loadAreas();
+        })
+        .catch(() => {})
+        .finally(() => { geographyLoading = false; });
+      return;
+    }
+    if (key === 'area') loadAreas();
+  };
+
   const openRow = (key) => {
     const row = rows[key];
     if (!row) return;
+    ensureGeography(key);
     closeRows(row);
     row.classList.add('is-open');
     const head = row.querySelector('[data-pick-toggle]');
@@ -161,8 +204,9 @@
       .map((item) => item.name)
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
-  const geography = data.geography || {};
-  const countries = uniqueSorted(Object.keys(geography).concat(locations.map((item) => item.country)));
+  let geography = data.geography || {};
+  const countryList = () =>
+    uniqueSorted(Object.keys(geography).concat(locations.map((item) => item.country)));
   const statesFor = (countryName) => countryName ? uniqueSorted(
     Object.keys(geography[countryName] || {}).concat(
       locations.filter((item) => item.country === countryName).map((item) => item.state)
@@ -215,7 +259,7 @@
   const renderCountry = () => {
     renderOptions(
       'country',
-      countries.map((name) => ({ value: name, label: name })),
+      countryList().map((name) => ({ value: name, label: name })),
       (item) => {
         state.country = item.value;
         state.state = '';
@@ -285,61 +329,127 @@
     return `${item.name}${abbr}${place ? ' · ' + place : ''}`;
   };
 
-  const filteredInstitutions = () => {
-    const list = institutions.filter((item) => {
-      if (state.country && String(item.country || '').toLowerCase() !== state.country.toLowerCase()) return false;
-      if (state.state && String(item.state || '').toLowerCase() !== state.state.toLowerCase()) return false;
-      if (state.area && String(item.area || '').toLowerCase() !== state.area.toLowerCase()) return false;
-      return true;
-    });
-    // Alphabetical with Nigeria first, regardless of the current filter.
-    return [...list].sort((a, b) => {
-      const aNigeria = String(a.country || '').toLowerCase() === 'nigeria' ? 0 : 1;
-      const bNigeria = String(b.country || '').toLowerCase() === 'nigeria' ? 0 : 1;
-      if (aNigeria !== bNigeria) return aNigeria - bNigeria;
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-        || String(a.state || '').localeCompare(String(b.state || ''), undefined, { sensitivity: 'base' });
-    });
+  const institutionParams = () => {
+    const params = new URLSearchParams();
+    if (state.country) params.set('country', state.country);
+    if (state.state) params.set('state', state.state);
+    if (state.area) params.set('area', state.area);
+    if (institutionQuery.q) params.set('q', institutionQuery.q);
+    params.set('offset', String(institutionQuery.offset));
+    return params;
   };
 
-  const renderInstitution = () => {
-    if (!rows.institution) return;
-    const options = [{ value: '', label: 'None — skip this step' }].concat(
-      filteredInstitutions().map((item) => ({ value: String(item.id), label: institutionLabel(item) }))
-    );
-    renderOptions(
-      'institution',
-      options,
-      (item) => {
-        if (!item.value) {
-          state.institution = '';
-          if (inputs.institution) inputs.institution.value = '';
-          setValue('institution', '', 'Optional');
-          return;
-        }
-        const record = institutions.find((entry) => String(entry.id) === item.value);
-        if (!record) return;
-        state.institution = String(record.id);
-        if (inputs.institution) inputs.institution.value = institutionLabel(record);
-        setValue('institution', institutionLabel(record), 'Optional');
+  let institutionSerial = 0;
+  const loadInstitutions = (done) => {
+    if (!institutionsUrl) { done([], {}); return; }
+    const serial = ++institutionSerial;
+    fetch(`${institutionsUrl}?${institutionParams().toString()}`, { credentials: 'same-origin' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (serial !== institutionSerial) return;
+        const records = (payload && payload.results) || [];
+        records.forEach((row) => institutionRows.set(String(row.id), row));
+        done(records, payload || {});
+      })
+      .catch(() => { if (serial === institutionSerial) done([], {}); });
+  };
 
-        // Picking an institution fills the geographic pickers from its record.
-        state.country = record.country || state.country;
-        state.state = record.state || state.state;
-        state.area = record.area || state.area;
-        if (inputs.country) inputs.country.value = state.country;
-        if (inputs.state) inputs.state.value = state.state;
-        if (inputs.area) inputs.area.value = state.area;
-        setValue('country', state.country, 'All countries');
-        setValue('state', state.state, 'All states');
-        setValue('area', state.area, 'All areas');
-        renderCountry();
-        renderState();
-        renderArea();
-        renderInstitution();
-      },
-      state.institution,
-    );
+  const pickInstitution = (record) => {
+    if (!record) {
+      state.institution = '';
+      if (inputs.institution) inputs.institution.value = '';
+      setValue('institution', '', 'Optional');
+      return;
+    }
+    state.institution = String(record.id);
+    if (inputs.institution) inputs.institution.value = institutionLabel(record);
+    setValue('institution', institutionLabel(record), 'Optional');
+    state.country = record.country || state.country;
+    state.state = record.state || state.state;
+    state.area = record.area || state.area;
+    if (inputs.country) inputs.country.value = state.country;
+    if (inputs.state) inputs.state.value = state.state;
+    if (inputs.area) inputs.area.value = state.area;
+    setValue('country', state.country, 'All countries');
+    setValue('state', state.state, 'All states');
+    setValue('area', state.area, 'All areas');
+    renderCountry();
+    renderState();
+    renderArea();
+  };
+
+  const renderInstitution = (resetOffset = true) => {
+    const row = rows.institution;
+    if (!row) return;
+    const list = row.querySelector('[data-pick-options]');
+    if (!list) return;
+    if (resetOffset) institutionQuery.offset = 0;
+    let search = row.querySelector('[data-request-option-search]');
+    if (!search) {
+      search = document.createElement('input');
+      search.type = 'search';
+      search.dataset.requestOptionSearch = '';
+      search.placeholder = 'Search institutions…';
+      search.setAttribute('aria-label', 'Search institutions');
+      search.style.cssText = 'box-sizing:border-box;width:100%;padding:10px;margin:0 0 8px;border:1px solid #e3d2c1;border-radius:10px;background:#fffdf9';
+      list.before(search);
+      let timer;
+      search.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          institutionQuery.q = search.value.trim();
+          renderInstitution(true);
+        }, 220);
+      });
+    }
+    list.textContent = '';
+    const status = document.createElement('p');
+    status.className = 'request-pick-status';
+    status.textContent = 'Loading institutions…';
+    list.appendChild(status);
+    loadInstitutions((records, payload) => {
+      list.textContent = '';
+      const skip = document.createElement('button');
+      skip.type = 'button';
+      skip.className = 'request-pick-option';
+      skip.textContent = 'None — skip this step';
+      skip.setAttribute('aria-selected', String(!state.institution));
+      skip.addEventListener('click', () => { pickInstitution(null); renderInstitution(); closeRows(); });
+      list.appendChild(skip);
+      records.forEach((record) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'request-pick-option';
+        button.setAttribute('role', 'option');
+        button.dataset.value = String(record.id);
+        button.setAttribute('aria-selected', String(String(record.id) === state.institution));
+        if (String(record.id) === state.institution) button.classList.add('is-selected');
+        button.textContent = institutionLabel(record);
+        button.addEventListener('click', () => { pickInstitution(record); renderInstitution(); closeRows(); });
+        list.appendChild(button);
+      });
+      const total = Number(payload.count || 0);
+      const shown = Number(payload.offset || 0) + records.length;
+      if (total > shown) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'request-pick-option request-pick-more';
+        more.textContent = `Show more (${total - shown} left)`;
+        more.addEventListener('click', () => {
+          institutionQuery.offset = shown;
+          renderInstitution(false);
+        });
+        list.appendChild(more);
+      }
+      if (!records.length) {
+        const empty = document.createElement('p');
+        empty.className = 'request-pick-status';
+        empty.textContent = institutionQuery.q
+          ? 'No institution matches that search.'
+          : 'No institutions are listed for this location.';
+        list.appendChild(empty);
+      }
+    });
   };
 
   const renderUrgency = () => {
@@ -516,6 +626,16 @@
   renderUrgency();
   renderCalendar();
   setValue('date', pretty(state.date), 'Choose a date');
+  };
+
+  const inline = readCatalogue();
+  if ((inline.services || []).length) { START(inline); return; }
+  const src = root.dataset.catalogueSrc;
+  if (!src) { START(EMPTY_CATALOGUE); return; }
+  fetch(src, { credentials: 'same-origin' })
+    .then((response) => (response.ok ? response.json() : EMPTY_CATALOGUE))
+    .then((value) => START(value && typeof value === 'object' ? value : EMPTY_CATALOGUE))
+    .catch(() => START(EMPTY_CATALOGUE));
 })();
 
 /**
@@ -583,9 +703,7 @@
     ],
     ordering: [
       { value: 'newest', label: 'Most recent' },
-      { value: 'rating', label: 'Highest rated' },
-      { value: 'experience', label: 'Most experienced' },
-      { value: 'completion', label: 'Completion rate' },
+      { value: 'oldest', label: 'Oldest first' },
     ],
   };
 

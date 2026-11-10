@@ -1,0 +1,662 @@
+/* ==========================================================================
+   Dropdown design system
+   --------------------------------------------------------------------------
+   One look for every picker in the product. The tokens below are taken from
+   the two reference pickers (the artisan discovery filters and the homepage
+   search filters): same panel surface, same 9px option radius, same 8/10
+   option padding, same warm hover and the same ✓ on the selected row.
+
+   This file is loaded last in base.html, so it can normalise the older picker
+   families (request, profile, match, artisan) without touching their markup or
+   their JavaScript.
+   ========================================================================== */
+
+:root {
+  --ds-surface: #fffdf9;
+  --ds-surface-alt: #f8f2e9;
+  --ds-border: #e6d5c4;
+  --ds-border-strong: #dcc3ad;
+  --ds-text: #5d4c40;
+  --ds-text-strong: #4a3226;
+  --ds-muted: #8a7663;
+  --ds-brand: #74432f;
+  --ds-brand-dark: #5a3222;
+  --ds-selected-bg: #f4e7d9;
+  --ds-hover-bg: #fffdf9;
+  --ds-radius-panel: 18px;
+  --ds-radius-option: 9px;
+  --ds-radius-input: 10px;
+  --ds-pad-option: 8px 10px;
+  --ds-shadow-panel: 0 18px 44px rgba(52, 36, 26, 0.16), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+  --ds-font: 12px;
+  --ds-font-small: 11.5px;
+}
+
+/* --- shared trigger ------------------------------------------------------ */
+
+body .request-pick,
+body .artisan-pick,
+body .profile-pick {
+  border-bottom: 1px solid rgba(116, 67, 47, 0.09);
+}
+
+body .request-pick:last-child,
+body .artisan-pick:last-child {
+  border-bottom: 0;
+}
+
+body .request-pick-head,
+body .artisan-pick-head {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 2px;
+  border: 0;
+  background: none;
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-font);
+  text-align: left;
+  cursor: pointer;
+}
+
+body .match-pick-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 2px;
+  border: 0;
+  background: none;
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-font);
+  text-align: left;
+  cursor: pointer;
+}
+
+body .match-pick-label {
+  color: var(--ds-text);
+  font-size: var(--ds-font);
+  font-weight: 600;
+}
+
+body .match-pick-value {
+  max-width: 100%;
+  color: var(--ds-brand);
+  font-size: var(--ds-font);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body .match-pick-chevron {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  transition: transform 0.22s ease;
+}
+
+body .match-pick.is-open .match-pick-chevron,
+body .match-pick-toggle[aria-expanded="true"] .match-pick-chevron {
+  transform: rotate(180deg);
+}
+
+body :is(.customer-profile-form, .artisan-profile-form) .profile-pick-toggle,
+body .profile-pick-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--ds-surface);
+  color: var(--ds-text-strong);
+  font: inherit;
+  font-size: var(--ds-font);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.18s ease;
+}
+
+body :is(.customer-profile-form, .artisan-profile-form) .profile-pick-toggle:hover,
+body .profile-pick-toggle:hover {
+  border-color: var(--ds-border-strong);
+}
+
+body :is(.customer-profile-form, .artisan-profile-form) .profile-pick-toggle[aria-expanded="true"],
+body :is(.customer-profile-form, .artisan-profile-form) .profile-pick-toggle:focus-visible,
+body .profile-pick-toggle[aria-expanded="true"],
+body .profile-pick-toggle:focus-visible {
+  border-color: #a66f4e;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(184, 135, 91, 0.14);
+}
+
+body .request-pick-icon,
+body .artisan-pick-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: #9c8875;
+}
+
+body .request-pick-label,
+body .artisan-pick-label {
+  color: var(--ds-text);
+  font-size: var(--ds-font);
+  font-weight: 600;
+}
+
+body .request-pick-value,
+body .artisan-pick-value,
+body .profile-pick-value {
+  max-width: 100%;
+  color: var(--ds-brand);
+  font-size: var(--ds-font);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body .request-pick-value.is-placeholder,
+body .artisan-pick-value.is-placeholder,
+body .profile-pick-value.is-placeholder {
+  color: var(--ds-muted);
+  font-weight: 400;
+}
+
+body .request-pick-chevron,
+body .artisan-pick-chevron,
+body .profile-pick-chevron {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: #9c8875;
+  transition: transform 0.22s ease, color 0.18s ease;
+}
+
+body .request-pick.is-open .request-pick-chevron,
+body .artisan-pick.is-open .artisan-pick-chevron,
+body .profile-pick.is-open .profile-pick-chevron,
+body .request-pick-head[aria-expanded="true"] .request-pick-chevron,
+body .artisan-pick-head[aria-expanded="true"] .artisan-pick-chevron,
+body .profile-pick-toggle[aria-expanded="true"] .profile-pick-chevron {
+  color: var(--ds-brand);
+  transform: rotate(180deg);
+}
+
+/* --- shared panel -------------------------------------------------------- */
+
+body .request-pick-body,
+body .artisan-pick-body,
+body .profile-pick-panel,
+body .match-pick-panel {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: var(--ds-radius-panel);
+  background: rgba(255, 253, 249, 0.9);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: var(--ds-shadow-panel);
+  animation: ds-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.25, 1) both;
+}
+
+body .request-pick-body[hidden],
+body .artisan-pick-body[hidden],
+body .profile-pick-panel[hidden],
+body .match-pick-panel[hidden] {
+  display: none !important;
+}
+
+@keyframes ds-panel-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --- shared option list -------------------------------------------------- */
+
+body .request-pick-options,
+body .artisan-pick-options,
+body .profile-pick-options,
+body .match-pick-options {
+  display: grid;
+  gap: 2px;
+  max-height: min(250px, 46dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #dcc9b7 transparent;
+}
+
+body .request-pick-option,
+body .artisan-pick-option,
+body .profile-pick-option,
+body .match-pick-options > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: var(--ds-pad-option);
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-option);
+  background: none;
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-font);
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transform: none;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, padding-left 0.18s ease;
+}
+
+body .request-pick-option:hover,
+body .artisan-pick-option:hover,
+body .profile-pick-option:hover,
+body .match-pick-options > button:hover {
+  border-color: var(--ds-border);
+  background: var(--ds-hover-bg);
+  color: var(--ds-brand-dark);
+  padding-left: 14px;
+  transform: none;
+}
+
+body .request-pick-option.is-selected,
+body .artisan-pick-option.is-selected,
+body .profile-pick-option.is-selected,
+body .profile-pick-option[aria-pressed="true"],
+body .match-pick-options > button[aria-pressed="true"] {
+  border-color: var(--ds-border-strong);
+  background: var(--ds-selected-bg);
+  color: var(--ds-brand-dark);
+  font-weight: 700;
+}
+
+body .request-pick-option.is-selected::before,
+body .artisan-pick-option.is-selected::before {
+  content: "✓";
+  color: var(--ds-brand);
+  font-size: 10px;
+}
+
+body .request-pick-option:focus-visible,
+body .artisan-pick-option:focus-visible,
+body .profile-pick-option:focus-visible,
+body .match-pick-options > button:focus-visible {
+  outline: 2px solid #aa7957;
+  outline-offset: 1px;
+}
+
+/* --- shared search box inside a panel ------------------------------------ */
+
+body .request-pick-search,
+body .artisan-pick-search,
+body .profile-pick-search,
+body .match-pick-search,
+body .artisan-filter-search,
+body .institution-search-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  margin: 0 0 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--ds-surface);
+  color: var(--ds-text-strong);
+  font: inherit;
+  font-size: var(--ds-font);
+}
+
+body .request-pick-search:focus,
+body .artisan-pick-search:focus,
+body .profile-pick-search:focus,
+body .match-pick-search:focus,
+body .artisan-filter-search:focus,
+body .institution-search-input:focus {
+  outline: 2px solid #dcc3ad;
+  outline-offset: 1px;
+}
+
+/* --- shared empty / status / "show more" --------------------------------- */
+
+body .request-pick-empty,
+body .artisan-pick-empty,
+body .request-pick-status,
+body .profile-pick-status,
+body .match-pick-message {
+  margin: 6px 2px 2px;
+  padding: 0;
+  color: var(--ds-muted);
+  font-size: var(--ds-font-small);
+  line-height: 1.6;
+}
+
+body .request-pick-more,
+body .artisan-pick-more,
+body .profile-pick-more,
+body .institution-more,
+body .match-pick-more,
+body .match-pick-clear {
+  width: 100%;
+  margin-top: 6px;
+  padding: 9px 12px;
+  border: 1px dashed var(--ds-border-strong);
+  border-radius: var(--ds-radius-input);
+  background: none;
+  color: var(--ds-brand);
+  font: inherit;
+  font-size: var(--ds-font-small);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+body .request-pick-more:hover,
+body .artisan-pick-more:hover,
+body .profile-pick-more:hover,
+body .institution-more:hover,
+body .match-pick-more:hover,
+body .match-pick-clear:hover {
+  background: rgba(244, 231, 217, 0.6);
+}
+
+body .request-pick-error {
+  margin: -6px 0 10px;
+  color: #b3261e;
+  font-size: var(--ds-font-small);
+}
+
+/* --- native selects ------------------------------------------------------ */
+
+body select,
+body .form-field select,
+body .console-field select,
+body .inline-form select {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 10px 34px 10px 12px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-input);
+  background-color: var(--ds-surface);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6' fill='none' stroke='%239c8875' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  color: var(--ds-text-strong);
+  font: inherit;
+  font-size: var(--ds-font);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+body select:focus,
+body .form-field select:focus {
+  border-color: var(--ds-border-strong);
+  outline: 2px solid #dcc3ad;
+  outline-offset: 1px;
+}
+
+/* --- mobile -------------------------------------------------------------- */
+
+@media (max-width: 700px) {
+  body .request-pick-head,
+  body .artisan-pick-head {
+    min-height: 52px;
+  }
+
+  body :is(.customer-profile-form, .artisan-profile-form) .profile-pick-toggle,
+  body .profile-pick-toggle {
+    min-height: 48px;
+    font-size: 13px;
+  }
+
+  body .request-pick-options,
+  body .artisan-pick-options,
+  body .profile-pick-options,
+  body .match-pick-options {
+    max-height: 220px;
+  }
+
+  body select,
+  body .form-field select {
+    min-height: 48px;
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body .request-pick-body,
+  body .artisan-pick-body,
+  body .profile-pick-panel,
+  body .match-pick-panel {
+    animation: none;
+  }
+
+  body .request-pick-option,
+  body .artisan-pick-option,
+  body .profile-pick-option,
+  body .match-pick-options > button,
+  body .request-pick-chevron,
+  body .artisan-pick-chevron,
+  body .profile-pick-chevron {
+    transition: none;
+  }
+}
+
+/* --- enhanced native selects (ds-select) ----------------------------------
+   Every plain <select> is taken off screen and re-presented as the reference
+   dropdown: same tokens, same chevron, same warm panel, same open animation,
+   with a search box and an option count. The native element keeps its place
+   in the form so submits and validation never change.                        */
+
+.ds-select {
+  position: relative;
+  width: 100%;
+}
+
+.ds-select-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--ds-surface);
+  color: var(--ds-text-strong);
+  font: inherit;
+  font-size: var(--ds-font);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.18s ease;
+}
+
+.ds-select-toggle:hover {
+  border-color: var(--ds-border-strong);
+}
+
+.ds-select-toggle[aria-expanded="true"] {
+  border-color: #a66f4e;
+  box-shadow: 0 0 0 3px rgba(184, 135, 91, 0.14);
+}
+
+.ds-select-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ds-select-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-select-toggle svg {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  color: #9c8875;
+  transition: transform 0.2s ease, color 0.18s ease;
+}
+
+.ds-select-toggle[aria-expanded="true"] svg {
+  color: var(--ds-brand);
+  transform: rotate(180deg);
+}
+
+.ds-select-panel {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: var(--ds-radius-panel);
+  background: rgba(255, 253, 249, 0.94);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: var(--ds-shadow-panel);
+  animation: ds-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.25, 1) both;
+}
+
+.ds-select-panel[hidden] {
+  display: none !important;
+}
+
+.ds-select-search {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  margin: 0 0 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--ds-surface);
+  color: var(--ds-text-strong);
+  font: inherit;
+  font-size: var(--ds-font);
+}
+
+.ds-select-search:focus {
+  outline: 2px solid #dcc3ad;
+  outline-offset: 1px;
+}
+
+.ds-select-options {
+  display: grid;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #dcc9b7 transparent;
+}
+
+.ds-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: var(--ds-pad-option);
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-option);
+  background: none;
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-font);
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease,
+    color 0.16s ease, padding-left 0.18s ease;
+}
+
+.ds-select-option:hover {
+  border-color: var(--ds-border);
+  background: var(--ds-hover-bg);
+  color: var(--ds-brand-dark);
+  padding-left: 14px;
+}
+
+.ds-select-option[aria-selected="true"] {
+  border-color: var(--ds-border-strong);
+  background: var(--ds-selected-bg);
+  color: var(--ds-brand-dark);
+  font-weight: 700;
+}
+
+.ds-select-option[aria-selected="true"]::before {
+  content: "✓";
+  color: var(--ds-brand);
+  font-size: 10px;
+}
+
+.ds-select-option:focus-visible {
+  outline: 2px solid #aa7957;
+  outline-offset: 1px;
+}
+
+.ds-select-status {
+  margin: 10px 0 0;
+  color: var(--ds-muted);
+  font-size: var(--ds-font-small);
+  line-height: 1.7;
+}
+
+select.ds-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+}
+
+.ds-select-toggle:focus-visible {
+  outline: 2px solid #aa7957;
+  outline-offset: 2px;
+}
+
+@media (max-width: 700px) {
+  .ds-select-toggle {
+    min-height: 48px;
+    font-size: 13px;
+  }
+
+  .ds-select-options {
+    max-height: 220px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-select-panel {
+    animation: none;
+  }
+
+  .ds-select-toggle svg {
+    transition: none;
+  }
+}

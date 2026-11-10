@@ -456,6 +456,27 @@ class ArtisanProfileForm(StyledForm):
         return clean_profile_location(self, clean_profile_links(self, cleaned))
 
 
+def institution_choice_label(item):
+    """One line for an institution option: name — campus · place."""
+    location = item.get("location") or {}
+    place = ", ".join(
+        str(location.get(key) or "").strip()
+        for key in ("area", "state", "country")
+        if location.get(key)
+    )
+    label = str(item.get("name") or "Institution")
+    if item.get("campus"):
+        label += f" — {item['campus']}"
+    if place:
+        label += f" · {place}"
+    return label
+
+
+def location_choice_label(item):
+    """One line for a location option: area, state, country."""
+    return ", ".join(str(item.get(key) or "") for key in ("area", "state", "country"))
+
+
 class PromotionApplicationForm(StyledForm):
     promotion_type = forms.ChoiceField(
         label="Promotion product",
@@ -512,25 +533,31 @@ class PromotionApplicationForm(StyledForm):
         widget=forms.Textarea(attrs={"rows": 5, "maxlength": 1200}),
     )
 
-    def __init__(self, *args, institutions=(), locations=(), offerings=(), **kwargs):
+    def __init__(
+        self,
+        *args,
+        institutions=(),
+        locations=(),
+        offerings=(),
+        state_pairs=None,
+        countries=None,
+        lazy_targets=False,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
+        # institution/area choices are full only when the caller fetched the
+        # rows for validation or an edit. A fresh create page keeps both
+        # selects on their empty option alone (lazy_targets) — the browser
+        # fills them from /catalogue/promotion-picker.json the first time a
+        # target group is shown, which is what keeps this page small and fast.
         self.institution_ids = set()
         institution_choices = [("", "Choose an institution")]
         for item in institutions:
             if not isinstance(item, dict) or not item.get("id"):
                 continue
-            location = item.get("location") or {}
-            place = ", ".join(
-                str(location.get(key) or "").strip()
-                for key in ("area", "state", "country")
-                if location.get(key)
+            institution_choices.append(
+                (str(item["id"]), institution_choice_label(item))
             )
-            label = str(item.get("name") or "Institution")
-            if item.get("campus"):
-                label += f" — {item['campus']}"
-            if place:
-                label += f" · {place}"
-            institution_choices.append((str(item["id"]), label))
             self.institution_ids.add(str(item["id"]))
         self.fields["institution_id"].choices = institution_choices
 
@@ -539,48 +566,46 @@ class PromotionApplicationForm(StyledForm):
         ]
         self.location_ids = {str(item["id"]) for item in location_rows}
         area_choices = [("", "Choose a supported area")]
-        for item in location_rows:
-            area_choices.append(
-                (
-                    str(item["id"]),
-                    ", ".join(
-                        str(item.get(key) or "") for key in ("area", "state", "country")
-                    ),
-                )
-            )
+        if not lazy_targets:
+            for item in location_rows:
+                area_choices.append((str(item["id"]), location_choice_label(item)))
         self.fields["area_location_id"].choices = area_choices
 
-        countries = sorted(
-            {
-                str(item.get("country") or "").strip()
+        if state_pairs is None:
+            # Legacy path: derive the pairs from the location rows themselves.
+            state_pairs = {
+                (
+                    str(item.get("country") or "").strip(),
+                    str(item.get("state") or "").strip(),
+                )
                 for item in location_rows
                 if str(item.get("country") or "").strip()
-            },
-            key=str.casefold,
-        )
-        states = sorted(
-            {
-                str(item.get("state") or "").strip()
-                for item in location_rows
-                if str(item.get("state") or "").strip()
-            },
-            key=str.casefold,
-        )
+                and str(item.get("state") or "").strip()
+            }
         self.state_country_pairs = {
-            (
-                str(item.get("country") or "").strip(),
-                str(item.get("state") or "").strip(),
-            )
-            for item in location_rows
-            if str(item.get("country") or "").strip()
-            and str(item.get("state") or "").strip()
+            (str(country).strip(), str(state).strip())
+            for country, state in state_pairs
+            if str(country).strip() and str(state).strip()
         }
-        self.fields["state_country"].choices = [("", "Choose a country")] + [
-            (value, value) for value in countries
-        ]
-        self.fields["state_name"].choices = [("", "Choose a state or region")] + [
-            (value, value) for value in states
-        ]
+
+        if countries is None:
+            countries = sorted(
+                {
+                    str(item.get("country") or "").strip()
+                    for item in location_rows
+                    if str(item.get("country") or "").strip()
+                },
+                key=str.casefold,
+            )
+        self.fields["state_country"].choices = [
+            ("", "Choose a country")
+        ] + [(value, value) for value in countries]
+        states = sorted(
+            {state for _, state in self.state_country_pairs}, key=str.casefold
+        )
+        self.fields["state_name"].choices = [
+            ("", "Choose a state or region")
+        ] + [(value, value) for value in states]
 
         service_choices = []
         self.service_ids_available = set()
@@ -786,6 +811,9 @@ class ServiceRequestForm(StyledForm):
 
     def __init__(self, *args, categories=None, services=None, locations=None, **kwargs):
         super().__init__(*args, **kwargs)
+        # Every country control in the product opens on Nigeria; a saved draft
+        # that already names a country keeps its own value.
+        self.initial.setdefault("location_country_filter", "Nigeria")
         categories = categories or []
         services = services or []
         self.location_records = [
@@ -945,8 +973,21 @@ class ArtisanServiceForm(StyledForm):
         required=False,
         max_length=32,
         help_text=(
-            "Anywhere uses the API's general-offering contract. Otherwise pick a "
-            "country, state and area from the geographic catalogue."
+            "Filled in by the pickers: the API's general-offering contract when "
+            "the service is offered everywhere, or the geographic sentinel."
+        ),
+    )
+    #: Offered everywhere and offered in one named area are different promises,
+    #: and an artisan may make both: the marketplace keeps one offering with no
+    #: location plus one per area. This switch is therefore independent of the
+    #: geographic pickers instead of an either/or.
+    available_anywhere = forms.BooleanField(
+        label="Available anywhere",
+        required=False,
+        initial=True,
+        help_text=(
+            "Offer this service with no fixed area, so every customer can find "
+            "you. You can also add one specific area below."
         ),
     )
     starting_price = forms.DecimalField(
@@ -1022,28 +1063,39 @@ class ArtisanServiceForm(StyledForm):
                 "service_name", "Choose a service from the selected category."
             )
 
-        coverage = str(cleaned.get("location_id") or "").strip()
-        if coverage == self.ANYWHERE_COVERAGE_VALUE:
-            cleaned["resolved_location"] = None
-        elif coverage == self.GEOGRAPHIC_COVERAGE_VALUE:
-            canonical = canonical_location(
-                cleaned.get("location_country_filter"),
-                cleaned.get("location_state_filter"),
-                cleaned.get("location_area_filter"),
-            )
+        anywhere = bool(cleaned.get("available_anywhere"))
+        country = str(cleaned.get("location_country_filter") or "").strip()
+        state = str(cleaned.get("location_state_filter") or "").strip()
+        area = str(cleaned.get("location_area_filter") or "").strip()
+        canonical = None
+        if any((country, state, area)):
+            if not all((country, state, area)):
+                raise forms.ValidationError(
+                    "Choose a country, a state and an area for the extra service "
+                    "location, or clear all three to offer it everywhere only."
+                )
+            canonical = canonical_location(country, state, area)
             if canonical is None:
                 raise forms.ValidationError(
-                    "Choose coverage as Anywhere, or pick a country, state and "
-                    "area from the geographic catalogue."
+                    "That place is not in the geographic catalogue. Pick the "
+                    "country, state and area from the lists."
                 )
             cleaned["location_country_filter"] = canonical["country"]
             cleaned["location_state_filter"] = canonical["state"]
             cleaned["location_area_filter"] = canonical["area"]
-            cleaned["resolved_location"] = canonical
-        else:
+        if canonical is None and not anywhere:
             raise forms.ValidationError(
-                "Choose coverage as Anywhere, or pick a country, state and area."
+                "Choose where this service is offered: available anywhere, one "
+                "specific area, or both."
             )
+        #: ONE offering per form: None means the anywhere row, a dict is the
+        #: named place. When the switch and a place are both given, the dict
+        #: goes out once with the everywhere promise (anywhere_with_location),
+        #: so the marketplace stores a single row instead of two.
+        resolved = [None] if canonical is None else [canonical]
+        cleaned["resolved_locations"] = resolved
+        cleaned["anywhere_with_location"] = canonical is not None and anywhere
+        cleaned["resolved_location"] = resolved[0]
         return cleaned
 
 

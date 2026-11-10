@@ -16,6 +16,7 @@
   var endpoint = host.getAttribute('data-popups-url') || '/notifications/popups/';
   var ackTemplate = host.getAttribute('data-ack-url') || '/notifications/0/acknowledge/';
   var acknowledged = {};
+  var shown = {};
 
   function csrfToken() {
     var match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
@@ -259,7 +260,8 @@
   function render(list) {
     (list || []).forEach(function (notification) {
       var item = details(notification);
-      if (acknowledged[item.id]) return;
+      if (acknowledged[item.id] || shown[item.id]) return;
+      shown[item.id] = true;
       if (item.popup === 'modal') { modalQueue.push(item); }
       else { queueToast(item); }
     });
@@ -267,15 +269,48 @@
   }
 
   function load() {
-    fetch(endpoint, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+    return fetch(endpoint, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
       .then(function (response) { return response.ok ? response.json() : []; })
       .then(render)
       .catch(function () { /* no popups is not an error */ });
   }
 
+  /* A quote that arrives while the other person is sitting in the chat must
+     appear on its own -- waiting for a page refresh is not "immediate". The
+     feed is re-read on a short timer, and at once when the tab comes back, so
+     both the artisan and the customer see the itemised request without doing
+     anything. Nothing is ever shown twice in the same visit. */
+  var POLL_MS = 8000;
+  var pollTimer = null;
+
+  function schedule() {
+    window.clearTimeout(pollTimer);
+    pollTimer = window.setTimeout(tick, POLL_MS);
+  }
+
+  function refresh() {
+    window.clearTimeout(pollTimer);
+    return load().then(schedule, schedule);
+  }
+
+  function tick() {
+    if (document.visibilityState === 'hidden') {
+      schedule();  /* a background tab asks again later; it never burns requests */
+      return;
+    }
+    refresh();
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') refresh();
+  });
+  window.addEventListener('focus', function () {
+    if (!modalOpen) refresh();
+  });
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', load);
+    document.addEventListener('DOMContentLoaded', refresh);
   } else {
-    load();
+    refresh();
   }
 })();

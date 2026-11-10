@@ -71,6 +71,12 @@
   margin: 14px 0 6px;
 }
 .console-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--c-muted); }
+/* A [hidden] field must stay hidden: the flex display above would otherwise
+   win over the browser default and show the custom-range boxes on every view. */
+.console-field[hidden], .console-field[hidden] * { display: none !important; }
+/* Console fields carry exactly what a marketplace select renders: 44px tall,
+   12px radius, the warm #e5dacf line, #fffdf9 paper and the same hover and
+   focus ring, so a text box and a select standing together read as one set. */
 .console-field input,
 .console-field select,
 .console-field textarea,
@@ -78,12 +84,28 @@
 .inline-form select {
   font: inherit;
   font-size: 13px;
-  color: var(--c-ink);
-  padding: 7px 9px;
-  border: 1px solid var(--c-line);
-  border-radius: 8px;
-  background: #fff;
-  min-width: 120px;
+  color: var(--artisan-ink, #2d211b);
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 1px solid var(--artisan-line, #e5dacf);
+  border-radius: 12px;
+  background: var(--artisan-paper, #fffdf9);
+  min-width: 140px;
+  transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+}
+.console-field input:hover,
+.console-field textarea:hover,
+.inline-form input:hover {
+  border-color: #b8967b;
+  background-color: #fffaf4;
+}
+.console-field input:focus-visible,
+.console-field textarea:focus-visible,
+.inline-form input:focus-visible {
+  border-color: var(--artisan-brand, #74432f);
+  outline: 2px solid rgba(116, 67, 47, .22);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(116, 67, 47, .10);
 }
 .console-field--wide { flex: 1 1 100%; }
 .console-field--date { max-width: 160px; }
@@ -92,17 +114,30 @@
 .console-button {
   font: inherit;
   font-size: 13px;
-  padding: 8px 14px;
-  border-radius: 8px;
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 10px;
   border: 1px solid var(--c-accent);
   background: var(--c-accent);
   color: #fff;
   cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+.console-button:hover { background: #743f12; border-color: #743f12; }
+.console-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(138, 75, 22, 0.22);
 }
 .console-button:hover { filter: brightness(1.05); }
 .console-button--quiet { background: #fff; color: var(--c-accent); }
 .console-button--danger { background: var(--c-bad); border-color: var(--c-bad); }
-.console-link { font-size: 13px; color: var(--c-accent); }
+.console-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+  color: var(--c-accent);
+}
 .console-range { font-size: 13px; color: var(--c-muted); margin: 4px 0 18px; }
 .console-chip {
   display: inline-block;

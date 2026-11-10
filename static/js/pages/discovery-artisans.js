@@ -205,6 +205,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let worldGeo = null;
   try { worldGeo = JSON.parse(document.getElementById('discovery-geography-data')?.textContent || 'null'); } catch (_) {}
+  // The world list is a 2.4 MB static file. It is fetched after the page has
+  // painted, and the cascade uses the marketplace's own locations until then.
+  const geographyUrl = (filterPanel && filterPanel.dataset.geographyUrl) || '';
   const allInstitutions = Array.from(
     (optionsBox('institution_id') || document).querySelectorAll('.artisan-filter-option[data-value]')
   )
@@ -223,6 +226,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const institutionStatus=filterPanel.querySelector('[data-institution-status]');
   const institutionMore=filterPanel.querySelector('[data-institution-more]');
   let institutionLocal=false,institutionOffset=0,institutionSerial=0,institutionController,institutionTimer;
+  // The index carries country -> states; a country's areas arrive on demand.
+  function ensureAreas(country){
+    if(!country||!geographyUrl||!window.GeographySource)return Promise.resolve();
+    return window.GeographySource.areas(geographyUrl, country)
+      .then(()=>{ if(typeof syncGeography==='function') syncGeography(); })
+      .catch(()=>{});
+  }
   function ensureInstitutionGeography(item){
     if(!worldGeo||!item)return;
     worldGeo[item.country] ||= {};
@@ -592,6 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
         input('institution_id').value='';
       }
       syncGeography();
+      if(key==='country')ensureAreas(field.value);
     } else syncDraftState();
     closeRow(key);
   });
@@ -619,5 +630,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Reflect the server-rendered selection (shared links, browser history).
   syncGeography();
+  if (!worldGeo && geographyUrl && window.GeographySource) {
+    window.GeographySource.load(geographyUrl)
+      .then((source) => {
+        worldGeo = (source && source.tree) || null;
+        syncGeography();
+        return ensureAreas(currentValue('country'));
+      })
+      .catch(() => {});
+  }
   syncTrades();
 });

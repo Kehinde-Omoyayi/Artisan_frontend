@@ -233,7 +233,8 @@
         Remove an offering below to add a different one. You can still edit the {{ max_services }} you have.</span>
       </div>
 
-      <form method="post" class="js-submit-form artisan-service-form" data-artisan-form data-service-filter-form data-service-picker-form data-anywhere-value="{{ anywhere_value }}" data-geographic-value="{{ geographic_value }}" data-max-services="{{ max_services }}" data-service-count="{{ service_count }}">
+      <form method="post" class="js-submit-form artisan-service-form" data-artisan-form data-service-filter-form data-service-picker-form data-anywhere-value="{{ anywhere_value }}" data-geographic-value="{{ geographic_value }}" data-max-services="{{ max_services }}" data-service-count="{{ service_count }}" data-geography-url="{% geography_index_url %}"
+              data-institutions-url="{% url 'institution-catalogue' %}">
         {% csrf_token %}
         {{ form.category_name.as_hidden }}
         {{ form.service_name.as_hidden }}
@@ -244,6 +245,12 @@
         {{ form.location_id.as_hidden }}
 
         {% if form.non_field_errors %}<div class="form-error">{{ form.non_field_errors }}</div>{% endif %}
+
+        {% if catalog_unreachable %}
+          <div class="workflow-empty-catalog-note" role="status">The marketplace could not be reached just now, so the service list is unavailable. This is a connection problem, not a setup problem: reload the page in a moment.</div>
+        {% elif not catalog_ready %}
+          <div class="workflow-empty-catalog-note" role="status">The service catalogue is empty, so there is nothing to choose yet. Services are configured in the marketplace API, not on this page.</div>
+        {% endif %}
 
         <p class="artisan-service-capacity"><strong>{{ service_count }}</strong> of <strong>{{ max_services }}</strong> services used{% if editing_item %} · editing “{{ editing_item.service_name }}”{% endif %}</p>
 
@@ -275,22 +282,24 @@
         </div>
 
         <div class="form-field artisan-coverage-field">
-          <span class="artisan-coverage-field-label">Availability / coverage</span>
-          <small class="artisan-coverage-field-help help">Choose where this service can be delivered. Anywhere means you accept clients from every location; turn it off to serve one catalogue location.</small>
+          {{ form.available_anywhere.as_hidden }}
+          <span class="artisan-coverage-field-label">Where you offer it</span>
+          <small class="artisan-coverage-field-help help">These are separate promises and both can be on: available anywhere so every customer can find you, and one named area below if you also work there.</small>
           <div class="artisan-coverage">
             <button class="artisan-coverage-toggle" type="button" data-anywhere-toggle aria-pressed="true">
               <span class="artisan-coverage-switch" aria-hidden="true"><span class="artisan-coverage-knob"></span></span>
               <span class="artisan-coverage-copy">
-                <strong>Anywhere</strong>
+                <strong>Available anywhere</strong>
                 <small data-anywhere-caption>Available across all locations</small>
               </span>
             </button>
           </div>
+          <p class="artisan-coverage-note" data-coverage-note hidden></p>
         </div>
 
-        <div class="artisan-service-pickers artisan-location-picks" data-location-rows hidden>
-          <span class="artisan-coverage-field-label artisan-location-picks-title">Service location</span>
-          <small class="help artisan-location-picks-help">Pick a country, state and area from the geographic catalogue. Choosing a closest institution fills them in for you.</small>
+        <div class="artisan-service-pickers artisan-location-picks" data-location-rows>
+          <span class="artisan-coverage-field-label artisan-location-picks-title">Also offer it in one area <span class="artisan-location-picks-optional">optional</span></span>
+          <small class="help artisan-location-picks-help">Pick a country, state and area, or choose a closest institution to fill them in. Leave all three empty to skip this extra area.</small>
           <section class="artisan-pick" data-service-row data-picker-key="country">
             <button class="artisan-pick-head" type="button" data-picker-toggle aria-expanded="false" aria-controls="pick-country">
               <span class="artisan-pick-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.6 12h16.8M12 3.6c2.4 2.3 3.7 5.2 3.7 8.4s-1.3 6.1-3.7 8.4c-2.4-2.3-3.7-5.2-3.7-8.4S9.6 5.9 12 3.6Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
@@ -336,7 +345,10 @@
               <span class="artisan-pick-chevron" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg></span>
             </button>
             <div class="artisan-pick-body" id="pick-institution" data-picker-body hidden>
+              <input class="artisan-pick-search" type="search" data-picker-search="institution" placeholder="Search institutions" autocomplete="off" aria-label="Search institutions">
               <div class="artisan-pick-options" role="listbox" aria-label="Closest institution" data-picker-options="institution"></div>
+              <p class="artisan-pick-empty" data-picker-empty="institution" hidden>No institution matches that name.</p>
+              <button class="artisan-pick-more" type="button" data-picker-more="institution" hidden></button>
             </div>
           </section>
         </div>
@@ -354,8 +366,6 @@
         </div>
 
         {% if editing_item %}<input type="hidden" name="offering_id" value="{{ editing_item.id }}">{% endif %}
-        {{ geography_records|json_script:"service-geography-records" }}
-        {{ institutions|json_script:"service-institution-records" }}
         {{ service_catalog|json_script:"service-catalogue-records" }}
       </form>
     </article>

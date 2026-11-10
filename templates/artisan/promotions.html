@@ -51,7 +51,7 @@
   <section class="promotion-form-panel panel" aria-labelledby="promotion-form-title">
     <div class="promotion-section-heading"><div><span class="artisan-panel-kicker">{% if selected_application %}Requested changes{% else %}New request{% endif %}</span><h2 id="promotion-form-title">{% if selected_application %}Update and resubmit{% else %}Promotion application{% endif %}</h2></div><span class="promotion-step-mark" aria-hidden="true">07</span></div>
     {% if not eligibility.eligible %}<div class="promotion-form-warning" role="status">You may prepare an application, but the API will not accept it until the eligibility requirements above are met.</div>{% endif %}
-    <form method="post" enctype="multipart/form-data" class="promotion-application-form" data-promotion-form>
+    <form method="post" enctype="multipart/form-data" class="promotion-application-form" data-promotion-form data-picker-url="{% url 'promotion-picker' %}">
       {% csrf_token %}
       {{ promotion_state_pairs|json_script:'promotion-state-pairs' }}
       {% if selected_application %}<input type="hidden" name="application_id" value="{{ selected_application.id }}">{% endif %}

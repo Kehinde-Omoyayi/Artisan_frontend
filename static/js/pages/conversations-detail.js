@@ -600,8 +600,26 @@
   const chip = card.querySelector("[data-transfer-chip]");
   const bar = card.querySelector("[data-transfer-bar]");
   const clock = card.querySelector("[data-transfer-clock]");
-  const total = Math.max(1, Number(card.getAttribute("data-transfer-seconds") || 0));
-  const deadline = Date.now() + total * 1000;
+  const count = card.querySelector("[data-transfer-count]");
+  const confirmForm = card.querySelector("[data-transfer-confirm]");
+  const renewForm = card.querySelector("[data-transfer-renew]");
+  const expiredNote = card.querySelector("[data-transfer-expired-note]");
+
+  /* The account lives about an hour. Prefer the seconds the server measured;
+     fall back to the provider's closing time so the clock is never blank. */
+  const seconds = Number(card.getAttribute("data-transfer-seconds") || 0);
+  const expiresAt = String(card.getAttribute("data-transfer-expires") || "").trim();
+  let deadline = 0;
+  if (seconds > 0) {
+    deadline = Date.now() + seconds * 1000;
+  } else if (expiresAt) {
+    const parsed = new Date(expiresAt.replace(" ", "T"));
+    if (!Number.isNaN(parsed.getTime())) deadline = parsed.getTime();
+  }
+  const span = Math.max(1, seconds > 0 ? seconds : Math.round((deadline - Date.now()) / 1000));
+  /* If the server gave no closing time at all, the card is shown as-is: an
+     unknown deadline must never be mistaken for an expired account. */
+  const timed = deadline > 0;
 
   card.querySelectorAll("[data-copy]").forEach((button) => {
     const label = button.querySelector("[data-copy-label]") || button;
@@ -636,26 +654,64 @@
 
   const timeLabel = (date) =>
     date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const pad = (value) => String(value).padStart(2, "0");
+
+  /* A visible countdown, and the honest end of it: the confirm button is
+     replaced by "Get a new transfer account", because the provider has closed
+     the old account and money sent to it would bounce. */
   const paint = () => {
-    const left = Math.max(0, deadline - Date.now());
-    const minutes = Math.ceil(left / 60000);
+    const left = timed ? Math.max(0, deadline - Date.now()) : 0;
+    const minutes = Math.floor(left / 60000);
+    const secs = Math.floor((left % 60000) / 1000);
+    if (!timed) {
+      if (count) count.textContent = "—";
+      return true;
+    }
+    if (count) {
+      count.textContent = left > 0 ? `${pad(minutes)}:${pad(secs)}` : "00:00";
+      count.setAttribute("data-low", left > 0 && left < 5 * 60000 ? "true" : "false");
+    }
     if (bar) {
-      bar.style.width = `${Math.min(100, (left / (total * 1000)) * 100)}%`;
+      bar.style.width = deadline ? `${Math.min(100, (left / (span * 1000)) * 100)}%` : "0%";
       bar.setAttribute("data-low", left > 0 && left < 10 * 60000 ? "true" : "false");
     }
+    if (left <= 0) {
+      if (clock) {
+        clock.textContent =
+          "This account has closed. Nothing has been charged — get a fresh one.";
+      }
+      if (chip) {
+        chip.textContent = "Expired";
+        chip.setAttribute("data-state", "expired");
+      }
+      if (confirmForm) confirmForm.hidden = true;
+      if (renewForm) renewForm.hidden = false;
+      if (expiredNote) expiredNote.hidden = false;
+      // The same moment the account closes, the way to start a new payment
+      // comes back -- no reload, and the API refuses it until exactly now.
+      const gate = document.querySelector("[data-pay-gate]");
+      if (gate) {
+        const start = gate.querySelector("[data-pay-start]");
+        const wait = gate.querySelector("[data-pay-wait]");
+        if (start) start.hidden = false;
+        if (wait) {
+          wait.hidden = false;
+          wait.textContent =
+            "This transfer account has closed. Nothing has been charged — start a fresh payment below.";
+        }
+        gate.setAttribute("data-pay-live", "false");
+      }
+      return false;
+    }
     if (clock) {
-      clock.textContent =
-        left > 0
-          ? `Closes at ${timeLabel(new Date(deadline))} — ${minutes} minute${minutes === 1 ? "" : "s"} left.`
-          : "This account has closed. Tap pay again for a fresh one — nothing has been charged.";
+      clock.textContent = `Closes at ${timeLabel(new Date(deadline))} — ${minutes} minute${minutes === 1 ? "" : "s"} left.`;
     }
-    if (chip && left <= 0) {
-      chip.textContent = "Expired";
-      chip.setAttribute("data-state", "expired");
-    }
+    return true;
   };
   paint();
-  window.setInterval(paint, 1000);
+  const clockTimer = window.setInterval(() => {
+    if (!paint()) window.clearInterval(clockTimer);
+  }, 1000);
 
   const endpoint = card.getAttribute("data-payment-status");
   if (!endpoint) return;

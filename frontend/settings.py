@@ -37,6 +37,13 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Compress HTML and JSON on the way out: pages are text, and a 10x smaller
+    # body is the difference between a snappy page and a slow one on mobile data.
+    "django.middleware.gzip.GZipMiddleware",
+    # Sits in front of WhiteNoise: WhiteNoise answers a static request without
+    # calling anything after it, so the cache header has to be extended on the
+    # way out of a middleware that wraps it (see frontend/middleware.py).
+    "frontend.middleware.StaticCacheMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -45,7 +52,22 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "frontend.security_middleware.SecurityHeadersMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "frontend.middleware.PageTimingMiddleware",
 ]
+
+# Local review harness only. A sandboxed preview frame (or any embedded
+# browser) posts with ``Origin: null``, which CSRF can never trust; this shim
+# rewrites that header to the host the request reached. It follows DEBUG: a
+# DEBUG server accepts those posts out of the box, and it is refused outright
+# when DEBUG is off, so production cannot use it. Cookies stay SameSite=Lax,
+# so a foreign site still cannot ride along.
+_sandboxed_origin = config("ALLOW_SANDBOXED_ORIGIN", default=DEBUG, cast=bool)
+if _sandboxed_origin and not DEBUG:
+    raise RuntimeError(
+        "ALLOW_SANDBOXED_ORIGIN is a local-review switch; never set it with DEBUG off."
+    )
+if _sandboxed_origin:
+    MIDDLEWARE.insert(0, "frontend.security_middleware.SandboxedOriginMiddleware")
 
 ROOT_URLCONF = "frontend.urls"
 WSGI_APPLICATION = "frontend.wsgi.application"
@@ -120,6 +142,21 @@ STORAGES = {
     "staticfiles": {"BACKEND": STATICFILES_BACKEND},
 }
 
+# A page asks the browser for ~24 static files before it can paint. Django's
+# development static handler answers each one with no ETag and no Cache-Control,
+# so every visit re-downloads every file. WhiteNoise answers them with an ETag
+# and a cache header from the same source tree. It only takes over when the
+# server is started with --nostatic; without that flag runserver keeps doing the
+# old thing, so this cannot break a start command that has not been updated.
+if DEBUG:
+    WHITENOISE_USE_FINDERS = True   # serve straight from static/, no collectstatic
+    WHITENOISE_AUTOREFRESH = True   # pick up an edited file without a restart
+    # Dev: cache static files for ten minutes instead of re-asking for all
+    # nineteen on every page. Versioned URLs carry the file's own stamp, so an
+    # edited stylesheet or script gets a new address and is fetched immediately.
+    WHITENOISE_MAX_AGE = 600
+    WHITENOISE_INDEX_FILE = False
+
 # The frontend always calls the independent API over HTTP. Never use in-process routing here.
 ARTISAN_API_BASE_URL = config(
     "ARTISAN_API_BASE_URL",
@@ -131,8 +168,26 @@ ARTISAN_API_ROOT_URL = config(
 ).rstrip("/")
 ARTISAN_API_TIMEOUT = config("ARTISAN_API_TIMEOUT", default=20, cast=int)
 ARTISAN_API_TRANSPORT = "http"
+# If ARTISAN_API_BASE_URL points at a public address (an ngrok tunnel) while the
+# API is running on this machine, every page pays an internet round trip per
+# API call. When that address stops answering, pages fall back to
+# ARTISAN_API_LOCAL_URL for a minute and log one line saying so.
+ARTISAN_API_FALLBACK_LOCAL = config("ARTISAN_API_FALLBACK_LOCAL", default=True, cast=bool)
+ARTISAN_API_LOCAL_URL = config("ARTISAN_API_LOCAL_URL", default="http://127.0.0.1:8000")
+# Any page slower than this is logged with its split between API time and
+# render time, so a slow page names itself instead of being guessed at.
+SLOW_PAGE_LOG_MS = config("SLOW_PAGE_LOG_MS", default=500, cast=int)
 
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
+# Two projects share one host in local testing (8080 for the site, 8000 for the
+# API) and cookies ignore the port: with the default names, opening the API in
+# the same browser overwrites this site's "sessionid"/"csrftoken", and the next
+# form POST fails CSRF with "token from POST incorrect". Distinct names keep the
+# two projects' cookies apart on one host and on a shared production domain.
+SESSION_COOKIE_NAME = config(
+    "SESSION_COOKIE_NAME", default="artisan_frontend_session"
+)
+CSRF_COOKIE_NAME = config("CSRF_COOKIE_NAME", default="artisan_frontend_csrf")
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = config(
     "SESSION_COOKIE_SAMESITE",
@@ -141,9 +196,15 @@ SESSION_COOKIE_SAMESITE = config(
 SESSION_COOKIE_SECURE = config("SESSION_COOKIE_SECURE", default=ENVIRONMENT == "production", cast=bool)
 CSRF_COOKIE_SECURE = config("CSRF_COOKIE_SECURE", default=ENVIRONMENT == "production", cast=bool)
 CSRF_COOKIE_SAMESITE = "Lax"
+# A page left open across a sign-in sends an out-of-date token. Say that plainly
+# instead of showing Django's raw 403 page.
+CSRF_FAILURE_VIEW = "frontend.csrf_failure.csrf_failure"
 SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=ENVIRONMENT == "production", cast=bool)
 SECURE_CONTENT_TYPE_NOSNIFF = True
-SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+# Same-origin requests keep sending their full address (Django reads it for the
+# "back to where you were" links and CSRF referer checks); every other site
+# gets no Referer at all. `no-referrer` here would silence both.
+SECURE_REFERRER_POLICY = "same-origin"
 SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=0, cast=int)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = config("SECURE_HSTS_INCLUDE_SUBDOMAINS", default=False, cast=bool)
 SECURE_HSTS_PRELOAD = config("SECURE_HSTS_PRELOAD", default=False, cast=bool)

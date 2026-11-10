@@ -34,7 +34,9 @@ PERIOD_CHOICES = [
     ("custom", "Custom range"),
 ]
 
-FILTER_FIELDS = ("category", "service", "location", "payment_status", "booking_status", "segment", "start", "end")
+# The analytics API applies the date range and nothing else; forwarding dead
+# dimensions only made the URL look filtered. Extend both sides together.
+FILTER_FIELDS = ("start", "end")
 
 SECTION_TITLES = {
     "overview": ("Management overview", "Volume, money and quality across the whole marketplace for the selected range."),

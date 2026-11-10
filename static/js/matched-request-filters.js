@@ -5,7 +5,10 @@
   let catalogue;
   try { catalogue = JSON.parse(document.getElementById('matched-filter-catalogue')?.textContent || '{}'); }
   catch (_) { catalogue = {}; }
-  const geography = catalogue.geography || {};
+  /* The world list is a 2.4 MB static file, fetched the first time a location
+     filter is opened instead of riding along with the page. */
+  let geography = catalogue.geography || {};
+  const geographyUrl = form.dataset.geographyUrl || '';
   const rows = Object.fromEntries([...form.querySelectorAll('[data-match-pick]')].map(row => [row.dataset.matchPick, row]));
   const placeholders = {service_name:'Any service',location_country:'Any country',location_area:'Any area',urgency:'Any urgency'};
   const urgency = [['LOW','Low'],['NORMAL','Normal'],['HIGH','High'],['EMERGENCY','Emergency']];
@@ -35,8 +38,9 @@
     if (key==='service_name') return unique((catalogue.services || []).map(item=>item.name)).map(name=>[name,name]);
     if (key==='location_country') return unique(Object.keys(geography).concat(value(key))).map(name=>[name,name]);
     if (key==='location_area') {
-      const countries = value('location_country') ? [geography[value('location_country')] || {}] : Object.values(geography);
-      return unique(countries.flatMap(states=>Object.values(states).flat()).concat(value(key))).map(name=>[name,name]);
+      const country = value('location_country');
+      if (!country) return [];
+      return unique(Object.values(geography[country] || {}).flat().concat(value(key))).map(name=>[name,name]);
     }
     return [];
   };
@@ -53,14 +57,26 @@
       button.addEventListener('click',()=>choose(key,id,label));list.appendChild(button);
     });
     message.hidden=matches.length>0 && matches.length<=250;
-    message.textContent=matches.length>250 ? `${matches.length.toLocaleString()} options. Showing the first 250; type to narrow the full list.` : 'No options match your search.';
+    if (key==='location_area' && !value('location_country')) {
+      message.hidden=false;
+      message.textContent='Choose a country first.';
+    } else {
+      message.textContent=matches.length>250 ? `${matches.length.toLocaleString()} options. Showing the first 250; type to narrow the full list.` : 'No options match your search.';
+    }
   };
   Object.entries(rows).forEach(([key,row])=>{
     set(key,value(key));
     row.querySelector('.match-pick-toggle').addEventListener('click',()=>{
       const opening=!row.classList.contains('is-open');close();if(!opening)return;
-      row.classList.add('is-open');row.querySelector('.match-pick-toggle').setAttribute('aria-expanded','true');row.querySelector('.match-pick-panel').hidden=false;
-      render(key);
+      const show=()=>{
+        row.classList.add('is-open');row.querySelector('.match-pick-toggle').setAttribute('aria-expanded','true');row.querySelector('.match-pick-panel').hidden=false;
+        render(key);
+      };
+      if(!Object.keys(geography).length&&geographyUrl&&window.GeographySource){
+        window.GeographySource.load(geographyUrl).then(src=>{geography=(src&&src.tree)||{};}).catch(()=>{}).finally(show);
+      } else if(key==='location_area'&&geographyUrl&&window.GeographySource){
+        window.GeographySource.areas(geographyUrl,value('location_country')||'').then(()=>show()).catch(()=>show());
+      } else show();
     });
     row.querySelector('.match-pick-search').addEventListener('input',()=>render(key));
     row.querySelector('.match-pick-search').addEventListener('keydown',event=>{if(event.key==='Enter')event.preventDefault();});
