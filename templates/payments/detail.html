@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% load static site_tags %}
+{% block title %}Payment · Artisan Market{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/conversations.css' %}?v=20261116c">
+{% endblock %}
+{% block content %}
+{% if addon_id %}
+<section class="panel addon-notice" style="margin-bottom:16px">
+  <span class="eyebrow">Separate add-on order</span>
+  <h2>{{ addon.current_offer.description|default:'A separate add-on order linked to this booking.' }}</h2>
+  <div class="detail-list">
+    <div><span>Add-on reference</span><strong>{{ payment.additional_order_id|default:addon_id }}</strong></div>
+    <div><span>Accepted amount</span><strong>₦{{ payment.service_amount }}</strong></div>
+    <div><span>Payment status</span><strong>{{ payment.status|title }}</strong></div>
+  </div>
+  {% if addon_url %}<div class="mt-16"><a class="button button-primary" href="{{ addon_url }}">Open the add-on in the conversation</a></div>{% endif %}
+</section>
+{% endif %}
+<section class="page-heading">
+  <div>
+    <div class="eyebrow">Payment</div>
+    <h1>{{ payment.reference }}</h1>
+    <p><span class="status-pill {{ payment.status|status_class }}">{{ payment.status|title }}</span></p>
+  </div>
+</section>
+{% if bank_transfer %}
+{% include 'partials/bank_transfer_card.html' with bank_transfer=bank_transfer payment_id=payment.id payment_status_url=payment_status_url payment_total=payment.total_amount transfer_context='payment' conversation_url=conversation_url %}
+{% endif %}
+<section class="content-grid two">
+  <article class="panel">
+    <h2>Payment summary</h2>
+    <div class="detail-list">
+      <div><span>Service amount</span><strong>₦{{ payment.service_amount }}</strong></div>
+      <div><span>Customer fee</span><strong>₦{{ payment.customer_fee }}</strong></div>
+      <div><span>Total</span><strong>₦{{ payment.total_amount }}</strong></div>
+      <div><span>Currency</span><strong>{{ payment.currency }}</strong></div>
+      <div><span>Provider status</span><strong>{{ payment.provider_status|default:'—' }}</strong></div>
+      <div><span>Verified</span><strong>{{ payment.verified_at|default:'—' }}</strong></div>
+    </div>
+  </article>
+  <article class="panel">
+    <h2>Payment timeline</h2>
+    <div class="timeline">
+      <div class="timeline-row"><div class="timeline-dot"></div><div><strong>Created</strong><span>{{ payment.created_at }}</span></div></div>
+      <div class="timeline-row"><div class="timeline-dot"></div><div><strong>Held</strong><span>{{ payment.held_at|default:'Not yet' }}</span></div></div>
+      <div class="timeline-row"><div class="timeline-dot"></div><div><strong>Released</strong><span>{{ payment.released_at|default:'Not yet' }}</span></div></div>
+    </div>
+    {% if receipt.available %}<div class="receipt-inline"><div><strong>Receipt {{ receipt.number }}</strong><span>{{ receipt.status_label }} · NGN {{ receipt.amounts.total|floatformat:2 }} · {{ receipt.method|default:'payment method not reported' }}</span></div><div class="receipt-inline-actions"><a class="button button-secondary button-small" href="{% url 'payment-receipt' payment_id=payment.id %}">View receipt</a><a class="button button-primary button-small" href="{% url 'payment-receipt-pdf' payment_id=payment.id %}">Download PDF</a></div></div>{% endif %}
+    {% if payment.authorization_url %}<div class="mt-16"><a class="button button-primary" href="{{ payment.authorization_url }}" target="_self" rel="noopener">Continue Secure Payment</a></div>{% elif payment.status == 'PAYMENT_PENDING' or payment.status == 'INITIALIZING' %}{% if not bank_transfer %}<p class="muted mt-14">Payment is being prepared. Refresh this page when the provider link is ready.</p>{% endif %}{% endif %}
+    {% if addon_url %}<div class="mt-16"><a class="chat-quiet-link" href="{{ addon_url }}">← Back to the add-on in the conversation</a></div>{% elif conversation_url %}<div class="mt-16"><a class="chat-quiet-link" href="{{ conversation_url }}">← Back to the conversation for this payment</a></div>{% endif %}
+  </article>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/pages/bank-transfer-card.js' %}"></script>{% endblock %}

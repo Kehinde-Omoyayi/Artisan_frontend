@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+{% load static site_tags %}
+{% block title %}Customer risk points · Artisan Market{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}"><link rel="stylesheet" href="{% static 'css/support-workspace.css' %}">{% endblock %}
+{% block content %}
+<section class="support-workspace artisan-motion-page support-risk-page">
+  <header class="support-page-hero" data-artisan-reveal data-motion="left"><div><a class="support-back-link" href="{% url 'support-operations' %}"><span aria-hidden="true">←</span> Operations</a><span class="support-eyebrow">CUSTOMER RISK APPEALS</span><h1>Customer risk points</h1><p>Find a customer, read their payment cancellation history, then add, remove, set or reset points. Every change is audited and the customer is told the outcome.</p></div><div class="support-page-actions"><a class="button button-secondary" href="{% url 'support-cases' %}">Case queue</a></div></header>
+  {% include 'partials/support_operation_shortcut.html' %}
+
+  <section class="support-panel">
+    <form class="support-risk-search" method="get" action="{% url 'support-risk' %}">
+      <label class="field"><span>Search customers</span><input class="field-input" type="search" name="search" value="{{ search }}" placeholder="Name or email" maxlength="120"></label>
+      <button class="button button-primary" type="submit">Search</button>
+    </form>
+    {% if results %}
+    <div class="table-scroll">
+      <table class="console-table">
+        <thead><tr><th>Customer</th><th>Score</th><th>%</th><th>Cancellations</th><th>Adjustment</th><th>Level</th><th></th></tr></thead>
+        <tbody>
+        {% for row in results %}
+          <tr>
+            <td><strong>{{ row.name }}</strong><br><small>{{ row.email }}</small></td>
+            <td>{{ row.cancellation_points }}/5</td>
+            <td>{{ row.risk_percentage }}%</td>
+            <td>{{ row.cancellation_count }}</td>
+            <td>{{ row.manual_adjustment_points }}</td>
+            <td>{{ row.risk_level|title }}</td>
+            <td><a class="button button-secondary button-small" href="{% url 'support-risk' %}?customer={{ row.customer }}">Open</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif search %}<p class="support-empty-note">No customer matched “{{ search }}”.</p>{% endif %}
+  </section>
+
+  {% if detail %}
+  <section class="support-panel support-risk-detail">
+    <header class="support-panel-head">
+      <div><span class="support-eyebrow">RISK FILE</span><h2>{{ detail.customer.name }} · {{ detail.customer.email }}</h2>
+      <p>Score <strong>{{ detail.score_label }}</strong> ({{ detail.risk_percentage }}%) · {{ detail.risk_level|title }} · window {{ detail.rolling_window_days }} days</p></div>
+      <span class="support-risk-level support-risk-level-{{ detail.risk_level|lower }}">{{ detail.risk_level|title }}</span>
+    </header>
+    <dl class="support-risk-facts">
+      <div><dt>Event points</dt><dd>{{ detail.event_points }}</dd></div>
+      <div><dt>Manual adjustment</dt><dd>{{ detail.manual_adjustment_points }}</dd></div>
+      <div><dt>Qualifying cancellations</dt><dd>{{ detail.cancellation_count }}</dd></div>
+      <div><dt>Account active</dt><dd>{% if detail.customer.is_active %}Yes{% else %}No — blocked{% endif %}</dd></div>
+    </dl>
+
+    <h3>Payment cancellation history</h3>
+    {% if detail.payment_cancellations %}
+    <div class="table-scroll">
+      <table class="console-table">
+        <thead><tr><th>When</th><th>Payment</th><th>Booking</th><th>Points</th><th>Initiated by</th><th>Reason</th></tr></thead>
+        <tbody>
+        {% for event in detail.payment_cancellations %}
+          <tr><td>{{ event.occurred_at|date:"d M Y, H:i" }}</td><td>{{ event.payment_reference }}</td><td>{{ event.booking_reference|default:"—" }}</td><td>{{ event.points_label }}</td><td>{{ event.initiated_by|title }}</td><td>{{ event.reason_text|default:event.reason_code|default:"—" }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}<p class="support-empty-note">No qualifying payment cancellations in the window.</p>{% endif %}
+
+    <h3>Adjustment history</h3>
+    {% if detail.adjustments %}
+    <div class="table-scroll">
+      <table class="console-table">
+        <thead><tr><th>When</th><th>Change</th><th>Score</th><th>Reason</th><th>Staff</th><th>Case</th></tr></thead>
+        <tbody>
+        {% for adjustment in detail.adjustments %}
+          <tr><td>{{ adjustment.created_at|date:"d M Y, H:i" }}</td><td>{{ adjustment.action_label }}</td><td>{{ adjustment.previous_points }} → {{ adjustment.new_points }}</td><td>{{ adjustment.reason }}</td><td>{{ adjustment.actor_email }}</td><td>{{ adjustment.support_case_reference|default:"—" }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}<p class="support-empty-note">No manual adjustments have been made.</p>{% endif %}
+
+    {% if support_capabilities.can_manage_risk_points %}
+    <form class="support-risk-adjust" method="post" action="{% url 'support-risk-adjust' customer_id=detail.customer.id %}">
+      {% csrf_token %}
+      <h3>Decide an appeal</h3>
+      <label class="field"><span>Action</span>
+        <select class="field-input" name="action">
+          <option value="ADD">Add one risk point</option>
+          <option value="REMOVE">Remove one risk point</option>
+          <option value="SET">Set an exact score</option>
+          <option value="RESET">Reset the score to zero</option>
+        </select>
+      </label>
+      <label class="field"><span>Target score (only for “Set an exact score”)</span><input class="field-input" type="number" name="points" min="0" max="5" value="{{ detail.cancellation_points }}"></label>
+      <label class="field"><span>Tell the customer the outcome by email</span>
+        <select class="field-input" name="notify_customer"><option value="true">Yes</option><option value="false">No</option></select>
+      </label>
+      <label class="field"><span>Reason (required, recorded in the audit trail)</span><textarea class="field-input" name="reason" rows="3" maxlength="1000" required placeholder="Payment cancelled after a provider outage; appeal upheld."></textarea></label>
+      <button class="button button-primary" type="submit" data-artisan-action>Apply adjustment</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <footer class="support-dashboard-footnote"><span class="support-footnote-icon" aria-hidden="true">✓</span><p>Adjusting a score never deletes the original payment cancellation record, and reaching the maximum raises a review: it never blocks the account by itself.</p></footer>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script>{% endblock %}

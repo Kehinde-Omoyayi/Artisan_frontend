@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% load static site_tags %}
+{% block title %}Appeal a support decision · Artisan Market{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}"><link rel="stylesheet" href="{% static 'css/support-workspace.css' %}">{% endblock %}
+{% block content %}
+<section class="support-workspace artisan-motion-page support-appeal-page">
+  <header class="support-page-hero" data-artisan-reveal data-motion="left">
+    <div>
+      <span class="support-eyebrow">PROTECTED APPEAL ROUTE</span>
+      <h1>Appeal a support decision</h1>
+      <p>Blocked, locked or suspended accounts can still reach customer support. Confirm the email address registered to your account and send your appeal — we attach your real account to it on our side, so nobody can file a case in your name.</p>
+    </div>
+  </header>
+
+  <ol class="support-appeal-steps" aria-label="Appeal steps">
+    <li class="{% if step == 'email' %}is-current{% elif step == 'code' or step == 'case' %}is-done{% endif %}"><span>1</span> Your email</li>
+    <li class="{% if step == 'code' %}is-current{% elif step == 'case' %}is-done{% endif %}"><span>2</span> Confirm the code</li>
+    <li class="{% if step == 'case' %}is-current{% endif %}"><span>3</span> Your appeal</li>
+  </ol>
+
+  {% if step == 'email' %}
+  <section class="support-panel">
+    <header class="support-panel-head"><div><h2>Step 1 · Enter your registered email address</h2>
+    <p>We send a six-digit code to that address only. If the address does not belong to a verified Artisan Market account, nothing is sent — and the answer looks exactly the same either way.</p></div></header>
+    <form method="post" action="{% url 'support-appeal' %}" class="support-appeal-form">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="email">
+      {{ email_form.as_p }}
+      <div class="support-form-actions"><button class="button button-primary" type="submit">Email me a code</button></div>
+    </form>
+    <p class="support-empty-note">Already signed in? <a href="{% url 'support-cases' %}">Open a support case</a> from your account instead.</p>
+  </section>
+  {% endif %}
+
+  {% if step == 'code' %}
+  <section class="support-panel">
+    <header class="support-panel-head"><div><h2>Step 2 · Confirm the code</h2>
+    <p>Enter the code we emailed{% if appeal_email %} to <strong>{{ appeal_email }}</strong>{% endif %}. It is single use, expires shortly, and can be tried only a few times. We never show the code on screen or send it back to this page.</p></div></header>
+    <form method="post" action="{% url 'support-appeal' %}" class="support-appeal-form">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="code">
+      {{ code_form.as_p }}
+      <div class="support-form-actions"><button class="button button-primary" type="submit">Confirm my email</button></div>
+    </form>
+    <form method="post" action="{% url 'support-appeal' %}" class="support-appeal-restart">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="email">
+      {{ email_form.email.as_hidden }}
+      <button class="button button-secondary button-small" type="submit">Send a new code</button>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if step == 'case' %}
+  <section class="support-panel">
+    <header class="support-panel-head"><div><h2>Step 3 · Tell us what happened</h2>
+    <p>Your identity is confirmed{% if appeal_email %} for <strong>{{ appeal_email }}</strong>{% endif %}. Write your appeal below — the case is filed against your account automatically. Do not include passwords, card numbers or one-time codes.</p></div></header>
+    <form method="post" action="{% url 'support-appeal' %}" class="support-appeal-form">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="case">
+      {{ case_form.as_p }}
+      <div class="support-form-actions"><button class="button button-primary" type="submit">Submit my appeal</button></div>
+    </form>
+    <form method="post" action="{% url 'support-appeal' %}" class="support-appeal-restart">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="restart">
+      <button class="button button-secondary button-small" type="submit">Start again</button>
+    </form>
+  </section>
+  {% endif %}
+
+  <p class="support-empty-note">Support replies by email and in the app. Filing a false appeal may delay a review; nothing here can unlock an account on its own — a member of the support team decides.</p>
+</section>
+{% endblock %}

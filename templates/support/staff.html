@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% load static site_tags %}
+{% block title %}Customer support staff management · Artisan Market{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}"><link rel="stylesheet" href="{% static 'css/support-workspace.css' %}">{% endblock %}
+{% block content %}
+<section class="support-workspace artisan-motion-page support-staff-page">
+  <header class="support-page-hero" data-artisan-reveal data-motion="left"><div><a class="support-back-link" href="{% url 'dashboard' %}"><span aria-hidden="true">←</span> Operations</a><span class="support-eyebrow">CUSTOMER SUPPORT STAFF MANAGEMENT</span><h1>Customer support staff</h1><p>Add a teammate, promote an existing account, review who was assigned when, and remove access again. Every rule shown here is enforced again by the API on each request.</p></div><div class="support-page-actions"><a class="button button-secondary" href="{% url 'support-cases' %}">Case queue</a><a class="button button-secondary" href="{% url 'support-refunds' %}">Refund operations</a></div></header>
+  {% include 'partials/support_operation_shortcut.html' %}
+
+  <section class="support-team-summary"><div><span class="support-team-summary-mark" aria-hidden="true">◎</span><span><strong>{{ staff|length }}</strong><small>support teammate{{ staff|length|pluralize }} shown</small></span></div><p>Agents handle cases and requests. Supervisors review case decisions. Finance executes and reconciles refunds. Admins manage role assignments. Staff access is <strong>never</strong> superuser access, and a new account is created without a password so the only way in is the staff password-reset flow.</p></section>
+
+  <section class="support-panel">
+    <form class="support-risk-search" method="get" action="{% url 'support-staff' %}">
+      <label class="field"><span>Search the roster</span><input class="field-input" type="search" name="search" value="{{ search }}" placeholder="Name, email or role" maxlength="120"></label>
+      <button class="button button-primary" type="submit">Search</button>
+      {% if search %}<a class="button button-secondary" href="{% url 'support-staff' %}">Clear</a>{% endif %}
+    </form>
+    {% if search and not staff %}<p class="support-empty-note">No teammate matched “{{ search }}”.</p>{% endif %}
+  </section>
+
+  {% if support_capabilities.can_manage_roles %}
+  <section class="support-panel support-staff-assign-panel">
+    <header class="support-panel-head"><div><span class="support-eyebrow">ADD A TEAMMATE</span><h2>Add or promote a support teammate</h2>
+    <p>Enter an existing account to promote it in place — everything else that account can do is kept. Enter a new address to create a staff account with no password; send that person a password-reset code from their card to let them in.</p></div></header>
+    <form method="post" action="{% url 'support-staff-assign' %}" class="support-staff-assign-form">
+      {% csrf_token %}
+      {{ assign_form.as_p }}
+      <div class="support-form-actions"><button class="button button-primary" type="submit">Add to the support team</button></div>
+    </form>
+  </section>
+  {% else %}
+  <p class="support-role-readonly">Adding and removing support teammates is restricted to support administrators.</p>
+  {% endif %}
+
+  <div class="support-team-grid">
+    {% for member in staff %}
+    <article class="support-team-card">
+      <div class="support-team-card-top"><span class="support-team-avatar" aria-hidden="true">{{ member.name|slice:':1'|upper }}</span><span class="support-team-id">STAFF #{{ member.id }}</span>{% if member.is_active %}<span class="support-staff-status support-staff-status--active">Active</span>{% else %}<span class="support-staff-status">Inactive</span>{% endif %}</div>
+      <h2>{{ member.name }}</h2><a class="support-team-email" href="mailto:{{ member.email }}">{{ member.email }}</a>
+      <div class="support-team-roles"><span class="support-eyebrow">ASSIGNED ROLES</span><div class="support-role-chips">{% for role in member.roles %}<span class="support-role-chip">{{ role|humanize_code }}</span>{% empty %}<span class="support-role-chip support-role-chip--empty">No support role</span>{% endfor %}</div></div>
+      <dl class="support-staff-facts">
+        <div><dt>Assigned</dt><dd>{% if member.assigned_at %}{{ member.assigned_at|date:"d M Y, H:i" }}{% else %}<span class="support-muted">Before tracking began</span>{% endif %}</dd></div>
+        <div><dt>Assigned by</dt><dd>{{ member.assigned_by|default:"—" }}</dd></div>
+        <div><dt>Status</dt><dd>{% if member.is_active %}Active{% else %}Inactive{% endif %}</dd></div>
+      </dl>
+      {% if support_capabilities.is_superuser %}
+        <div class="support-staff-recovery">
+          {% if member.security_questions_registered %}
+            <p>Recovery questions are registered.</p>
+            <form method="post" action="{% url 'support-staff-password-reset' user_id=member.id %}">{% csrf_token %}<button class="button button-secondary full" type="submit">Send password reset code</button></form>
+          {% else %}
+            <p>Recovery questions are not registered. Authorize setup first; answers will not be invented.</p>
+            <form method="post" action="{% url 'support-staff-security-setup' user_id=member.id %}">{% csrf_token %}<button class="button button-secondary full" type="submit">Authorize security-question setup</button></form>
+          {% endif %}
+        </div>
+      {% endif %}
+      {% if support_capabilities.can_manage_roles %}<a class="button button-secondary full" href="{% url 'support-staff-roles' user_id=member.id %}">Edit support roles <span aria-hidden="true">→</span></a>{% else %}<p class="support-role-readonly">Role editing is restricted to support administrators.</p>{% endif %}
+      {% if support_capabilities.can_manage_roles %}
+      <details class="support-staff-removal">
+        <summary class="button button-ghost full">Remove from the support team</summary>
+        <form method="post" action="{% url 'support-staff-remove' user_id=member.id %}" class="support-staff-remove-form">
+          {% csrf_token %}
+          {{ remove_form.as_p }}
+          <p class="support-empty-note">Removing takes away the support roles and, when nothing else needs it, the staff flag. Their other groups and permissions are kept, and the removal is recorded.</p>
+          <div class="support-form-actions"><button class="button button-danger" type="submit" onclick="return confirm('Remove {{ member.email }} from the support team? Their support roles are taken away immediately.');">Confirm removal</button></div>
+        </form>
+      </details>
+      {% endif %}
+    </article>
+    {% empty %}<div class="support-panel support-empty"><strong>No support teammates found</strong><p>The API returns active staff accounts assigned to a support group.{% if search %} Try a different search.{% else %} Add one above to get started.{% endif %}</p></div>{% endfor %}
+  </div>
+
+  {% if support_capabilities.can_manage_roles and assignments %}
+  <section class="support-panel">
+    <header class="support-panel-head"><div><span class="support-eyebrow">AUDIT TRAIL</span><h2>Who was given support access, and when</h2></div></header>
+    <div class="table-scroll">
+      <table class="console-table">
+        <thead><tr><th>Account</th><th>Roles</th><th>Created</th><th>Assigned by</th><th>Assigned</th><th>Removed</th><th>Removed by</th><th>Reason</th></tr></thead>
+        <tbody>
+        {% for row in assignments %}
+          <tr>
+            <td><strong>{{ row.user_email }}</strong></td>
+            <td>{% for role in row.roles %}<span class="support-role-chip">{{ role|humanize_code }}</span>{% empty %}—{% endfor %}</td>
+            <td>{% if row.created_account %}Yes{% else %}No — existing account{% endif %}</td>
+            <td>{{ row.assigned_by_email|default:"—" }}</td>
+            <td>{{ row.created_at|date:"d M Y, H:i" }}</td>
+            <td>{% if row.removed_at %}{{ row.removed_at|date:"d M Y, H:i" }}{% else %}Active{% endif %}</td>
+            <td>{{ row.removed_by_email|default:"—" }}</td>
+            <td>{{ row.removal_reason|default:"—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <footer class="support-dashboard-footnote"><span class="support-footnote-icon" aria-hidden="true">✓</span><p>Keep each person on the least-privilege roles they need. Changes to support groups take effect immediately at the API permission boundary, and nobody can grant themselves access.</p></footer>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/pages/artisan-ui.js' %}"></script>{% endblock %}

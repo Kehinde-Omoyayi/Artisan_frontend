@@ -1,0 +1,178 @@
+{% extends 'base.html' %}
+{% load static site_tags %}
+{% block title %}{% if is_landing_page %}Customer home{% else %}Customer profile{% endif %} · Artisan Market{% endblock %}
+{% block body_class %}{% if is_landing_page %}landing-page authenticated-home-page{% endif %}{% endblock %}
+{% block main_class %}{% if is_landing_page %}landing-main authenticated-home-main{% else %}page-shell{% endif %}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% asset 'css/institution-picker.css' %}">
+{% if is_landing_page %}<link rel="stylesheet" href="{% static 'css/landing.css' %}">{% endif %}
+<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}">
+<link rel="stylesheet" href="{% static 'css/customer-profile.css' %}?v=20261116b">
+<link rel="stylesheet" href="{% asset 'css/customer-profile-pickers.css' %}">
+{% if is_landing_page %}<link rel="stylesheet" href="{% static 'css/authenticated-home.css' %}">{% endif %}
+{% endblock %}
+{% block content %}
+<section class="artisan-motion-page workspace-page customer-profile-page" data-artisan-page="customer-profile">
+  {% if is_landing_page %}
+  {% include 'partials/authenticated_home_hero.html' %}
+{% else %}
+  <header class="page-heading artisan-page-heading customer-profile-hero" data-artisan-reveal data-motion="left">
+    <div class="customer-profile-avatar" aria-hidden="true">{% if profile.profile_photo %}<img src="{{ profile.profile_photo }}" alt="" data-profile-photo-image referrerpolicy="no-referrer"><span data-profile-photo-fallback hidden>{{ profile.first_name|default:'C'|slice:':1'|upper }}</span>{% else %}<span data-profile-photo-fallback>{{ profile.first_name|default:'C'|slice:':1'|upper }}</span>{% endif %}</div>
+    <div class="customer-profile-hero-copy">
+      <span class="workspace-eyebrow"><span aria-hidden="true">✦</span> Customer profile</span>
+      <h1 data-text-motion>{% if profile.first_name %} {{ profile.first_name }} {% else %} Your profile{% endif %}</h1>
+      <p>{{ profile.email|default:'Your account details, requests, and notifications in one place.' }}</p>
+    </div>
+    <div class="customer-profile-hero-mark" aria-hidden="true"><span>CM</span><span class="customer-profile-hero-mark-dot customer-profile-hero-mark-dot-one"></span><span class="customer-profile-hero-mark-dot customer-profile-hero-mark-dot-two"></span></div>
+  </header>
+{% endif %}
+
+  <div class="customer-profile-layout">
+    <article class="panel workspace-card customer-profile-form-card" aria-labelledby="customer-profile-form-title" data-artisan-reveal data-motion="left" data-tour-target="account">
+      <header class="workspace-card-heading">
+        <div><span class="artisan-panel-kicker">Personal details</span><h2 id="customer-profile-form-title">Your information</h2></div>
+        <span class="workflow-panel-icon" aria-hidden="true">✎</span>
+      </header>
+      <p class="workspace-card-intro">Keep your contact and location details current so artisans can coordinate with you.</p>
+      {% if profile_completion_required %}<div class="workflow-empty-catalog-note" role="status">Complete these profile fields before continuing: {{ missing_profile_fields|join:", " }}. Your profile is needed to submit service requests and send marketplace messages.</div>{% endif %}
+      <form method="post" enctype="multipart/form-data" class="js-submit-form customer-profile-form" data-artisan-form data-profile-pickers data-institutions-url="{% url 'institution-catalogue' %}" data-geography-url="{% geography_index_url %}" data-catalogue-mode="frontend-text" data-today="{{ profile_picker_today }}" data-institution-label="{{ profile.nearest_institution_name }}">
+        {% if profile_completion_required and next_target %}<input type="hidden" name="next" value="{{ next_target }}">{% endif %}
+        {% include 'partials/form.html' %}
+        <button class="button button-primary workflow-submit" type="submit" data-artisan-action>Save changes <span aria-hidden="true">→</span></button>
+      </form>
+    </article>
+
+    <aside class="customer-profile-sidebar" aria-label="Customer shortcuts" data-artisan-reveal data-motion="right">
+      <section class="panel workspace-card customer-profile-shortcuts" aria-labelledby="customer-profile-shortcuts-title">
+        <header class="workspace-card-heading">
+          <div><span class="artisan-panel-kicker">Quick access</span><h2 id="customer-profile-shortcuts-title">Your activity</h2></div>
+          <span class="customer-profile-shortcuts-spark" aria-hidden="true">✦</span>
+        </header>
+        <p class="workspace-card-intro">Open a notification preview or go straight to your service requests.</p>
+        <div class="customer-profile-action-grid">
+          <button class="customer-profile-action-card" type="button" data-notification-dialog-open aria-haspopup="dialog" aria-controls="customer-notification-dialog" aria-expanded="false">
+            <span class="customer-profile-action-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"/></svg>
+            </span>
+            {% if unread_notification_count %}<span class="customer-profile-action-badge" aria-label="{{ unread_notification_count }} unread">{{ unread_notification_count }}</span>{% endif %}
+            <strong>Notifications</strong>
+            <small>{% if unread_notification_count %}{{ unread_notification_count }} unread update{{ unread_notification_count|pluralize }}{% else %}{{ notification_total }} recent update{{ notification_total|pluralize }}{% endif %}</small>
+            <span class="customer-profile-action-arrow" aria-hidden="true">↗</span>
+          </button>
+          <a class="customer-profile-action-card" href="{% url 'service-requests' %}">
+            <span class="customer-profile-action-icon customer-profile-action-icon-request" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false"><path d="M7 4.5h10a2 2 0 0 1 2 2v13H5v-13a2 2 0 0 1 2-2ZM8.5 9h7M8.5 13h7M8.5 17h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"/></svg>
+            </span>
+            {% if request_total %}<span class="customer-profile-action-badge customer-profile-action-badge-count">{{ request_total }}</span>{% endif %}
+            <strong>Requests</strong>
+            <small>{{ request_total }} service request{{ request_total|pluralize }} · View your list</small>
+            <span class="customer-profile-action-arrow" aria-hidden="true">↗</span>
+          </a>
+          <a class="customer-profile-action-card" href="{% url 'customer-bookings' %}">
+            <span class="customer-profile-action-icon customer-profile-action-icon-request" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false"><path d="M5 7.5h14M5 12h14M5 16.5h9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"/><path d="m15.5 15 2 2 3.5-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"/></svg>
+            </span>
+            <strong>Bookings</strong>
+            <small>Agreed work, prices, schedules and what you can do next</small>
+            <span class="customer-profile-action-arrow" aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </section>
+
+      {% if risk %}
+      <section class="panel workspace-card customer-risk-card" data-risk-level="{{ risk.risk_level|lower }}" aria-labelledby="customer-risk-title" data-artisan-reveal data-motion="up">
+        <header class="customer-risk-head">
+          <div><span class="artisan-panel-kicker">Account standing</span><h2 id="customer-risk-title">Customer risk status</h2></div>
+          <span class="customer-risk-badge">{{ risk.risk_level|title }}</span>
+        </header>
+        <p class="workspace-card-intro customer-risk-intro">Payment cancellations you start add one risk point each. Booking cancellations never add a point.</p>
+        <div class="customer-risk-body">
+          <div class="customer-risk-ring" role="img" aria-label="Risk score {{ risk.score_label }} — {{ risk.risk_percentage }}% of the review threshold used">
+            <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+              <circle class="risk-ring-track" cx="60" cy="60" r="50"/>
+              <circle class="risk-ring-progress" cx="60" cy="60" r="50" pathLength="100" style="--risk-pct: {{ risk.risk_percentage }}"/>
+            </svg>
+            <div class="customer-risk-ring-center"><strong><span data-risk-countup="{{ risk.risk_percentage }}">{{ risk.risk_percentage }}</span><small>%</small></strong><span>Risk used</span></div>
+          </div>
+          <dl class="customer-risk-facts">
+            <div class="customer-risk-fact">
+              <dt><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="m9.6 9.6 4.8 4.8m0-4.8-4.8 4.8"/></svg>Payment cancellations</dt>
+              <dd>{{ risk.cancellation_count }}</dd>
+            </div>
+            <div class="customer-risk-fact">
+              <dt><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 20.5V4.8"/><path d="M6 5.5h10.5l-2.2 3.6 2.2 3.6H6"/></svg>Review threshold</dt>
+              <dd>{{ risk.review_threshold }}<small>/{{ risk.max_points }}</small></dd>
+            </div>
+            <div class="customer-risk-fact">
+              <dt><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="6" width="15" height="14.5" rx="2.5"/><path d="M4.5 10.2h15M9 3.8V7m6-3.2V7"/></svg>Rolling window</dt>
+              <dd>{{ risk.rolling_window_days }}<small> days</small></dd>
+            </div>
+          </dl>
+        </div>
+        <div class="customer-risk-meter" role="img" aria-label="Risk meter — {{ risk.cancellation_points }} of {{ risk.max_points }} points">
+          <span class="customer-risk-meter-fill" style="--risk-pct: {{ risk.risk_percentage }}"></span>
+        </div>
+        <div class="customer-risk-meter-scale" aria-hidden="true"><span>0</span><span>Review at {{ risk.review_threshold }}</span><span>{{ risk.max_points }}</span></div>
+        <p class="customer-risk-note"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5.2c0 4.6 2.9 8.6 7 9.8 4.1-1.2 7-5.2 7-9.8V6L12 3Z"/><path d="m9.3 12 2 2 3.6-3.8"/></svg><span>{% if risk.risk_level == 'REVIEW' %}Under review — our team will look at your recent account activity with you.{% elif risk.risk_level == 'WARNING' %}Getting close — a few more payment cancellations would trigger a review.{% else %}Standing clear — no payment cancellations count against you in this window.{% endif %}</span></p>
+        {% if risk.payment_cancellations %}
+        <div class="customer-risk-history">
+          <h3>Recent payment cancellations</h3>
+          <ul>
+            {% for event in risk.payment_cancellations %}
+            <li>
+              <span class="customer-risk-history-when">{{ event.occurred_at|date:"d M Y, H:i" }}</span>
+              <span class="customer-risk-history-ref">Payment {{ event.payment_reference }}</span>
+              <span class="customer-risk-history-points">{{ event.points_label }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+        {% if risk.adjustments %}
+        <div class="customer-risk-history">
+          <h3>Support adjustments</h3>
+          <ul>
+            {% for adjustment in risk.adjustments %}
+            <li>
+              <span class="customer-risk-history-when">{{ adjustment.created_at|date:"d M Y, H:i" }}</span>
+              <span class="customer-risk-history-ref">{{ adjustment.action_label }}: {{ adjustment.previous_points }} → {{ adjustment.new_points }}</span>
+              <span class="customer-risk-history-points">{{ adjustment.reason|truncatechars:90 }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+        <a class="button button-secondary button-small customer-risk-cta" href="{% url 'cancellation-risk' %}">Full risk history<span class="customer-risk-cta-arrow" aria-hidden="true">→</span></a>
+      </section>
+      {% endif %}
+
+      <div class="customer-profile-note" data-artisan-reveal data-motion="up">
+        <span class="customer-profile-note-mark" aria-hidden="true">✦</span>
+        <p><strong>A smoother service starts here.</strong><br>Keep your profile up to date and check your activity whenever you need it.</p>
+      </div>
+    </aside>
+  </div>
+
+  <dialog class="customer-notification-dialog" id="customer-notification-dialog" aria-labelledby="customer-notification-title" data-notification-dialog>
+    <header class="customer-notification-dialog-head">
+      <div><span class="artisan-panel-kicker">Your account activity</span><h2 id="customer-notification-title">Notifications</h2><p>{% if unread_notification_count %}{{ unread_notification_count }} unread update{{ unread_notification_count|pluralize }}{% else %}Your latest marketplace updates{% endif %}</p></div>
+      <button class="customer-notification-dialog-close" type="button" data-notification-dialog-close aria-label="Close notifications"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"/></svg></button>
+    </header>
+    <div class="customer-notification-dialog-body">
+      {% if notifications %}
+        <ul class="workspace-notification-list customer-profile-dialog-list">
+          {% for item in notifications %}
+            <li class="workspace-notification-row{% if not item.read_at %} is-unread{% endif %}">
+              <span class="workspace-notification-mark" aria-hidden="true">{% if not item.read_at %}•{% else %}✓{% endif %}</span>
+              <div class="workspace-notification-copy"><strong>{{ item.title }}</strong><p>{{ item.message|truncatechars:180 }}</p><small><time datetime="{{ item.created_at }}">{{ item.created_at|slice:":10" }}</time></small>{% if item.safe_url %}<a href="{{ item.safe_url }}">{{ item.safe_action_label|default:'Open update' }} <span aria-hidden="true">→</span></a>{% endif %}</div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="workspace-empty workspace-empty-compact customer-profile-dialog-empty"><span class="workspace-empty-icon" aria-hidden="true">◌</span><strong>No recent notifications</strong><p>Updates about your requests and bookings will appear here.</p></div>
+      {% endif %}
+    </div>
+    <footer class="customer-notification-dialog-foot"><a href="{% url 'notifications-page' %}">View all notifications <span aria-hidden="true">→</span></a><button type="button" data-notification-dialog-close>Done</button></footer>
+  </dialog>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% asset 'js/customer-profile-pickers.js' %}"></script><script src="{% static 'js/pages/artisan-ui.js' %}"></script><script src="{% static 'js/pages/profile-activity.js' %}"></script><script src="{% static 'js/pages/customer-risk-card.js' %}"></script>{% endblock %}

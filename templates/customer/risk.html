@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block title %}Customer risk status · Artisan Market{% endblock %}
+{% block content %}<section class="page-heading"><div><div class="eyebrow">Account standing</div><h1>Customer risk status</h1><p>Payment cancellations you start add one risk point each. Booking cancellations never add a risk point, and a high score raises a review: it never blocks your account.</p></div></section>
+
+<section class="risk-grid">
+  <div class="risk-score">
+    <span>Current score</span>
+    <strong>{{ risk.score_label }}</strong>
+    <small>{{ risk.risk_percentage }}% · {{ risk.risk_level }}</small>
+  </div>
+  <div class="panel"><div class="detail-list">
+    <div><span>Qualifying payment cancellations</span><strong>{{ risk.cancellation_count }}</strong></div>
+    <div><span>Eligible bookings</span><strong>{{ risk.eligible_booking_count }}</strong></div>
+    <div><span>Weighted cancellation rate</span><strong>{{ risk.weighted_cancellation_rate|floatformat:1 }}%</strong></div>
+    <div><span>Rolling window</span><strong>{{ risk.rolling_window_days }} days</strong></div>
+    <div><span>Review threshold</span><strong>{{ risk.review_threshold }}/{{ risk.max_points }}</strong></div>
+    <div><span>Maximum score</span><strong>{{ risk.max_points }}/{{ risk.max_points }} (100%)</strong></div>
+  </div></div>
+</section>
+
+<section class="panel" style="margin-top:18px">
+  <h2 class="panel-title">Payment cancellation history</h2>
+  {% if risk.payment_cancellations %}
+  <div class="table-scroll">
+    <table class="console-table">
+      <thead><tr><th>When</th><th>Payment reference</th><th>Booking</th><th>Points</th><th>Recorded by</th><th>Reason</th></tr></thead>
+      <tbody>
+      {% for event in risk.payment_cancellations %}
+        <tr>
+          <td>{{ event.occurred_at|date:"d M Y, H:i" }}</td>
+          <td>{{ event.payment_reference }}</td>
+          <td>{{ event.booking_reference|default:"—" }}</td>
+          <td>{{ event.points_label }}</td>
+          <td>{{ event.initiated_by|title }}</td>
+          <td>{{ event.reason_text|default:event.reason_code|default:"—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="muted">No payment cancellations have been recorded in the last {{ risk.rolling_window_days }} days.</p>{% endif %}
+</section>
+
+<section class="panel" style="margin-top:18px">
+  <h2 class="panel-title">Support adjustments</h2>
+  {% if risk.adjustments %}
+  <div class="table-scroll">
+    <table class="console-table">
+      <thead><tr><th>When</th><th>Change</th><th>Score</th><th>Reason</th><th>Case</th></tr></thead>
+      <tbody>
+      {% for adjustment in risk.adjustments %}
+        <tr>
+          <td>{{ adjustment.created_at|date:"d M Y, H:i" }}</td>
+          <td>{{ adjustment.action_label }}</td>
+          <td>{{ adjustment.previous_points }} → {{ adjustment.new_points }}</td>
+          <td>{{ adjustment.reason }}</td>
+          <td>{{ adjustment.support_case_reference|default:"—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="muted">Customer support has not adjusted your risk score.</p>{% endif %}
+</section>
+
+<p style="margin-top:18px"><a class="button button-secondary" href="{% url 'customer-profile' %}">Back to your profile</a></p>
+{% endblock %}

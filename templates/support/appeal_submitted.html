@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Appeal submitted · Artisan Market{% endblock %}
+{% block head %}<link rel="stylesheet" href="{% static 'css/artisan-pages.css' %}"><link rel="stylesheet" href="{% static 'css/support-workspace.css' %}">{% endblock %}
+{% block content %}
+<section class="support-workspace artisan-motion-page support-appeal-page">
+  <header class="support-page-hero" data-artisan-reveal data-motion="left">
+    <div>
+      <span class="support-eyebrow">APPEAL RECEIVED</span>
+      <h1>Your appeal is with customer support</h1>
+      <p>We attached it to the account that owns the email address you confirmed. Keep the reference below — you can quote it in any reply.</p>
+    </div>
+  </header>
+
+  <section class="support-panel support-appeal-reference">
+    <span class="support-eyebrow">REFERENCE</span>
+    <p class="support-appeal-reference-code">{{ reference }}</p>
+    <p class="support-empty-note">A support agent reviews every appeal in order of urgency. You will be contacted by email and in the app once there is a decision. Nothing here changes your account on its own.</p>
+    <div class="support-form-actions">
+      <a class="button button-secondary" href="{% url 'support-appeal' %}">Send another appeal</a>
+      <a class="button button-primary" href="{% url 'login' %}">Back to sign in</a>
+    </div>
+  </section>
+</section>
+{% endblock %}

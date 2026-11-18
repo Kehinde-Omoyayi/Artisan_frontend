@@ -1,0 +1,24 @@
+
+/* Customer risk status (payment cancellation risk) */
+.customer-risk-card { margin-top: 16px; }
+.customer-risk-badge { font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; background: #eef3ec; color: #4d6b3f; }
+.customer-risk-badge-warning { background: #fdf3e2; color: #8a5a1b; }
+.customer-risk-badge-review { background: #fdecec; color: #9b2c2c; }
+.customer-risk-summary { display: grid; gap: 8px; margin: 10px 0 12px; }
+.customer-risk-score { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.customer-risk-score span { font-size: 11px; color: var(--muted, #7a6a5a); }
+.customer-risk-score strong { font-size: 22px; font-weight: 800; }
+.customer-risk-score small { font-size: 12px; font-weight: 800; color: #8a5a1b; }
+.customer-risk-meter { display: block; height: 8px; border-radius: 999px; background: #efe6da; overflow: hidden; }
+.customer-risk-meter-fill { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #7fa05f, #d08a2c); }
+.customer-risk-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 0 0 12px; }
+.customer-risk-facts dt { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted, #7a6a5a); }
+.customer-risk-facts dd { margin: 2px 0 0; font-size: 13px; font-weight: 700; }
+.customer-risk-history { margin-top: 10px; }
+.customer-risk-history h3 { font-size: 12px; margin: 0 0 6px; }
+.customer-risk-history ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.customer-risk-history li { display: grid; grid-template-columns: 130px 1fr auto; gap: 8px; align-items: baseline; font-size: 11px; padding: 7px 9px; border: 1px solid var(--line, #e6dccf); border-radius: 10px; background: #fffdf9; }
+.customer-risk-history-when { color: var(--muted, #7a6a5a); }
+.customer-risk-history-ref { font-weight: 700; word-break: break-all; }
+.customer-risk-history-points { font-weight: 800; color: #8a5a1b; text-align: right; }
+@media (max-width: 620px) { .customer-risk-history li { grid-template-columns: 1fr; } .customer-risk-history-points { text-align: left; } }

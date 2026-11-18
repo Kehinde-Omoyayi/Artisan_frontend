@@ -1,0 +1,288 @@
+/* ==========================================================================
+   DATE AND TIME PICKING — the marketplace's own calendar.
+
+   The preferred-date calendar was being drawn with no stylesheet at all: the
+   markup and the JavaScript that fill the grid were there, but every rule that
+   would make it look like part of this website was missing, so it fell back to
+   bare browser styling -- a raw stack of buttons, nothing like the cards,
+   pills and dropdowns around it.
+
+   This file is that missing half. It uses only the tokens the rest of the site
+   already uses (--brand, --ink, --muted, --line, --surface, --surface-soft and
+   the same radii, shadows and easing), so the calendar reads as one more
+   marketplace panel rather than a control from somewhere else.
+
+   Structure it styles, as built by static/js/request-pickers.js:
+
+     .request-pick-body > .request-calendar
+       .request-calendar-head   > .request-calendar-title, .request-calendar-nav
+       .request-calendar-week   > 7 spans  (Su Mo Tu We Th Fr Sa)
+       .request-calendar-grid   > .request-calendar-day
+       .request-calendar-foot   > Today / Clear
+   ========================================================================== */
+
+.request-calendar {
+  --calendar-gap: 3px;
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--line, #e5dacf);
+  border-radius: 10px;
+  background: linear-gradient(145deg, #fffdf9 0%, #fbf6ef 100%);
+  box-shadow: 0 4px 14px rgba(54, 39, 29, .045);
+}
+
+.request-calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.request-calendar-title {
+  color: var(--brand-dark, #4c3025);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: -.005em;
+}
+
+.request-calendar-nav { display: inline-flex; gap: 5px; }
+
+.request-calendar-nav button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #e0d1c2;
+  border-radius: 8px;
+  background: #fffdf9;
+  color: var(--brand, #74432f);
+  cursor: pointer;
+  transition: transform .18s ease, border-color .18s ease, background-color .18s ease;
+}
+.request-calendar-nav button:hover {
+  border-color: #b5896b;
+  background: #f7efe6;
+  transform: translateY(-1px);
+}
+.request-calendar-nav button:active { transform: translateY(0); }
+
+.request-calendar-week,
+.request-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--calendar-gap);
+}
+
+.request-calendar-week span {
+  padding-bottom: 3px;
+  color: #9a8168;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.request-calendar-day {
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #fffdf9;
+  color: var(--ink, #2d211b);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color .16s ease, color .16s ease, border-color .16s ease,
+              transform .16s ease, box-shadow .16s ease;
+}
+.request-calendar-day:hover {
+  border-color: #d9c1ab;
+  background: #f7efe6;
+  color: var(--brand-dark, #4c3025);
+  transform: translateY(-1px);
+}
+
+/* Days belonging to the months either side: present so the grid never
+   changes shape, but not offered as a choice. */
+.request-calendar-day.is-muted {
+  background: transparent;
+  color: #c3b3a4;
+  font-weight: 600;
+}
+.request-calendar-day.is-muted:hover {
+  background: rgba(116, 67, 47, .04);
+  color: #a39283;
+}
+
+.request-calendar-day.is-today {
+  border-color: #c9a98c;
+  color: var(--brand-dark, #4c3025);
+  box-shadow: inset 0 0 0 1px rgba(116, 67, 47, .12);
+}
+
+/* The chosen day: the brand fill used by every selected pill on the site. */
+.request-calendar-day.is-selected {
+  border-color: var(--brand, #74432f);
+  background: var(--brand, #74432f);
+  color: #fffdf9;
+  box-shadow: 0 5px 14px rgba(116, 67, 47, .26);
+}
+.request-calendar-day.is-selected:hover {
+  background: var(--brand-dark, #4c3025);
+  border-color: var(--brand-dark, #4c3025);
+  color: #fffdf9;
+}
+
+.request-calendar-day.is-disabled {
+  border-color: transparent;
+  background: transparent;
+  color: #cbc0b5;
+  cursor: not-allowed;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.request-calendar-day.is-disabled:hover {
+  background: transparent;
+  color: #cbc0b5;
+  transform: none;
+}
+
+.request-calendar-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(116, 67, 47, .12);
+}
+.request-calendar-foot button {
+  padding: 5px 11px;
+  border: 1px solid #e0d1c2;
+  border-radius: 99px;
+  background: #fffdf9;
+  color: var(--brand, #74432f);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .01em;
+  cursor: pointer;
+  transition: border-color .18s ease, background-color .18s ease, color .18s ease;
+}
+.request-calendar-foot button:hover {
+  border-color: #b5896b;
+  background: #f7efe6;
+}
+
+.request-calendar :focus-visible {
+  outline: 3px solid #b47b56;
+  outline-offset: 2px;
+}
+
+@media (max-width: 460px) {
+  .request-calendar { padding: 10px; }
+  .request-calendar-day { font-size: 10px; border-radius: 7px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .request-calendar-day,
+  .request-calendar-nav button,
+  .request-calendar-foot button { transition: none; }
+  .request-calendar-day:hover,
+  .request-calendar-nav button:hover { transform: none; }
+}
+
+/* --------------------------------------------------------------------------
+   Time inputs.
+
+   The native time control is the one piece of browser chrome left in these
+   forms, and it does not match the fields beside it. These rules dress it in
+   the same skin as .field-input so the row reads as one form.
+   -------------------------------------------------------------------------- */
+.request-form input[type="time"],
+.request-form input[type="date"],
+.request-form input[type="datetime-local"],
+.field-input[type="time"],
+.field-input[type="date"],
+.field-input[type="datetime-local"] {
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid #d7c8b9;
+  border-radius: 5px;
+  background: var(--surface, #fffdf9);
+  color: var(--ink, #2d211b);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color-scheme: light;
+}
+.request-form input[type="time"]:focus,
+.request-form input[type="date"]:focus,
+.request-form input[type="datetime-local"]:focus,
+.field-input[type="time"]:focus,
+.field-input[type="date"]:focus,
+.field-input[type="datetime-local"]:focus {
+  border-color: #9c7358;
+  box-shadow: 0 0 0 4px rgba(116, 67, 47, .12);
+  outline: none;
+}
+
+/* --------------------------------------------------------------------------
+   Quick schedule chips.
+
+   A raw datetime-local input asks the artisan to type a date and a time into
+   browser chrome. These chips sit under it and fill in the moments people
+   actually mean when they say "when can you come" -- tomorrow morning,
+   tomorrow afternoon, the weekend, next week -- so the schedule is one tap for
+   the usual cases and the input stays there for the exact ones.
+   -------------------------------------------------------------------------- */
+.schedule-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.schedule-quick-label {
+  flex: 1 0 100%;
+  color: var(--muted, #75665a);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.schedule-quick button {
+  padding: 5px 11px;
+  border: 1px solid #e0d1c2;
+  border-radius: 99px;
+  background: #fffdf9;
+  color: var(--brand, #74432f);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color .18s ease, background-color .18s ease,
+              color .18s ease, transform .18s ease;
+}
+.schedule-quick button:hover {
+  border-color: #b5896b;
+  background: #f7efe6;
+  transform: translateY(-1px);
+}
+.schedule-quick button[aria-pressed="true"] {
+  border-color: var(--brand, #74432f);
+  background: var(--brand, #74432f);
+  color: #fffdf9;
+  box-shadow: 0 4px 12px rgba(116, 67, 47, .22);
+}
+.schedule-quick :focus-visible { outline: 3px solid #b47b56; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .schedule-quick button { transition: none; }
+  .schedule-quick button:hover { transform: none; }
+}

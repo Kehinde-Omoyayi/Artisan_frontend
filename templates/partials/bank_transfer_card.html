@@ -1,0 +1,111 @@
+{% load static %}
+{% comment %}
+  The one bank-transfer card. Used by the chat (where the payer acts) and the
+  payment detail page (where the payer checks). Every state the provider or the
+  state machine can produce renders here:
+
+    account_number set          -> the account, with the countdown ring
+    status CREATING             -> "we are setting this up" (nothing to pay)
+    status OUTCOME_UNKNOWN      -> "we lost the answer; we are checking"
+
+  The payer's own action lives in the chat (the confirm form). The payment
+  page links back instead of offering a button that would post nowhere.
+{% endcomment %}
+{% if bank_transfer and bank_transfer.account_number %}
+<section class="chat-transfer" data-transfer-card data-payment-id="{{ payment_id }}" data-payment-status="{{ payment_status_url }}" data-transfer-seconds="{{ bank_transfer.seconds_left|default:0 }}" data-transfer-expires="{{ bank_transfer.expires_at }}" data-transfer-context="{{ transfer_context|default:'chat' }}" aria-label="Bank transfer account">
+  <header class="chat-transfer-top">
+    <span class="chat-transfer-badge" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"><path d="M3 10h18M5 10V7.6c0-.4.24-.76.62-.9L12 4.2l6.38 2.5c.38.14.62.5.62.9V10M5 10v9m4.5-9v9m5-9v9m4.5-9v9M3.5 19.5h17"/></svg>
+    </span>
+    <div class="chat-transfer-title">
+      <span class="chat-transfer-eyebrow">Bank transfer · escrow</span>
+    </div>
+    {% comment %}"Waiting" and the countdown are one unit: the ring
+    drains in step with the number inside it, so the time the payer
+    reads and the time the API enforces are the same clock.{% endcomment %}
+    <div class="chat-transfer-status">
+      <span class="chat-transfer-chip" data-transfer-chip>Waiting</span>
+      <span class="chat-transfer-ring" data-transfer-ring role="timer" aria-live="off" aria-label="Time left on this transfer account">
+        <svg viewBox="0 0 76 76" aria-hidden="true">
+          <circle class="chat-transfer-ring-track" cx="38" cy="38" r="33" />
+          <circle class="chat-transfer-ring-fill" cx="38" cy="38" r="33" data-transfer-ring-fill />
+        </svg>
+        <span class="chat-transfer-ring-time" data-transfer-count>—</span>
+      </span>
+    </div>
+  </header>
+
+  {% comment %}The countdown and the button never move; the details
+  scroll between them, so on a short screen the payer reaches the
+  account number without losing the clock.{% endcomment %}
+  <div class="chat-transfer-body" data-transfer-body tabindex="0" role="group" aria-label="Transfer account details">
+  <div class="chat-transfer-hero">
+    <div class="chat-transfer-field">
+      <span class="chat-transfer-label">Amount to send (charges included)</span>
+      <span class="chat-transfer-value">₦{% firstof bank_transfer.amount payment_total %}</span>
+    </div>
+    <button type="button" class="chat-transfer-copy" data-copy="{% firstof bank_transfer.amount payment_total %}" data-copy-style="chip"><span data-copy-label>Copy</span></button>
+  </div>
+
+  <div class="chat-transfer-hero chat-transfer-hero-number">
+    <div class="chat-transfer-field">
+      <span class="chat-transfer-label">Account number</span>
+      <span class="chat-transfer-value chat-transfer-digits" data-copy-value>{{ bank_transfer.account_number }}</span>
+    </div>
+    <button type="button" class="chat-transfer-copy" data-copy="{{ bank_transfer.account_number }}" data-copy-style="chip"><span data-copy-label>Copy</span></button>
+  </div>
+
+  <dl class="chat-transfer-meta">
+    <div><dt>Bank account</dt><dd>{{ bank_transfer.bank|default:"—" }}</dd></div>
+    <div><dt>Beneficiary name</dt><dd>{% firstof bank_transfer.beneficiary_name bank_transfer.account_name "—" %}</dd></div>
+  </dl>
+
+  <div class="chat-transfer-clock">
+    <p class="chat-transfer-clock-copy" data-transfer-clock>This account closes at {{ bank_transfer.expires_at|default:"the time shown in your bank app" }}.</p>
+  </div>
+
+  {% if bank_transfer.note %}<p class="chat-transfer-note">{{ bank_transfer.note }}</p>{% endif %}
+  </div>
+
+  <div class="chat-transfer-actions">
+    {% if transfer_context == 'payment' %}
+      {% if conversation_url %}<a class="button button-primary chat-transfer-submit" href="{{ conversation_url }}?transfer={{ payment_id }}">Open the chat to confirm this transfer</a>
+      {% else %}<p class="chat-transfer-expiry-note">Open your conversation and tap “I have made this bank transfer” once the money is on its way.</p>{% endif %}
+    {% else %}
+      <form method="post" data-transfer-confirm>{% csrf_token %}<input type="hidden" name="action" value="{{ transfer_action|default:'pay_transfer_check' }}">{% if transfer_order_id %}<input type="hidden" name="order_id" value="{{ transfer_order_id }}">{% endif %}<input type="hidden" name="payment_id" value="{{ payment_id }}"><button class="button button-primary chat-transfer-submit" type="submit" data-artisan-action>I have made this bank transfer</button></form>
+    {% endif %}
+    <p class="chat-transfer-expiry-note" data-transfer-expired-note hidden>This account has closed. Nothing has been charged — request a fresh link{% if transfer_context == 'payment' and conversation_url %} from the chat{% else %} above{% endif %}.</p>
+  </div>
+</section>
+{% else %}
+{% if bank_transfer and bank_transfer.status == 'CREATING' or bank_transfer and bank_transfer.status == 'OUTCOME_UNKNOWN' %}
+<section class="chat-transfer chat-transfer-pending" data-transfer-pending data-payment-id="{{ payment_id }}" data-state="{{ bank_transfer.status }}" data-payment-status="{{ payment_status_url }}" data-transfer-context="{{ transfer_context|default:'chat' }}" aria-label="Bank transfer status">
+  <header class="chat-transfer-top">
+    <span class="chat-transfer-badge" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"><path d="M3 10h18M5 10V7.6c0-.4.24-.76.62-.9L12 4.2l6.38 2.5c.38.14.62.5.62.9V10M5 10v9m4.5-9v9m5-9v9m4.5-9v9M3.5 19.5h17"/></svg>
+    </span>
+    <div class="chat-transfer-title">
+      <span class="chat-transfer-eyebrow">Bank transfer · escrow</span>
+      <strong>{% if bank_transfer.status == 'CREATING' %}Setting up your account{% else %}We are checking on your transfer{% endif %}</strong>
+    </div>
+    <div class="chat-transfer-status">
+      {% if bank_transfer.status == 'CREATING' %}<span class="chat-transfer-chip is-pending" data-state="pending">Setting up</span>
+      {% else %}<span class="chat-transfer-chip is-unknown" data-state="unknown">Checking</span>{% endif %}
+      <span class="chat-transfer-spin" aria-hidden="true"></span>
+    </div>
+  </header>
+  <div class="chat-transfer-body" role="status" aria-live="polite">
+    {% if bank_transfer.status == 'CREATING' %}
+      <p class="chat-transfer-pending-copy"><strong>Your dedicated account is being created.</strong> The provider usually answers in a few seconds. This page refreshes itself the moment the account is ready — nothing has been charged, and no second account will be created while this one is being set up.</p>
+    {% else %}
+      <p class="chat-transfer-pending-copy"><strong>We did not get a confirmation from the provider.</strong> We re-check automatically and show the account the moment the provider tells us it exists — or that it never did. No new account is opened until then, nothing will be charged twice, and if money has already left your bank it stays matched to this payment.</p>
+      <p class="chat-transfer-pending-note">Already sent the money? Keep your bank receipt — it is the proof this payment is tied to your bank app.</p>
+    {% endif %}
+  </div>
+  <div class="chat-transfer-actions chat-transfer-actions-pending">
+    <button type="button" class="button button-secondary chat-transfer-submit" data-transfer-recheck>Check again now</button>
+    {% if transfer_context == 'payment' and conversation_url %}<a class="chat-quiet-link" href="{{ conversation_url }}">Open the chat for this payment</a>{% endif %}
+  </div>
+</section>
+{% endif %}
+{% endif %}

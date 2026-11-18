@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}Verify email · Artisan Market{% endblock %}
+{% block content %}
+{% if delivery_failed %}
+<div class="auth-delivery-warning" role="status">
+  <span class="auth-delivery-mark" aria-hidden="true">!</span>
+  <div>
+    <strong>We could not send that code.</strong>
+    <p>The mail server did not accept it, so no message is on its way. Nothing is lost — request another code below and we will try again.</p>
+  </div>
+</div>
+{% elif delivery_pending %}
+<div class="auth-delivery-pending" role="status">
+  <span class="auth-delivery-mark pending" aria-hidden="true">&hellip;</span>
+  <div>
+    <strong>Your code is on its way.</strong>
+    <p>Mail is still being handed over to the mail server. It usually arrives within a few seconds — if nothing arrives within a minute, use the resend link below.</p>
+  </div>
+</div>
+{% endif %}
+{% include 'partials/auth_flow_page.html' with flow_kind='email-verification' title='Verify your email' intro='Enter the six-digit code sent to your email to verify the address linked to this account.' page_eyebrow='Email verification' flow_kicker='ACCOUNT VERIFICATION' flow_side_title='One quick check, then you can continue.' flow_side_copy='Your verification code confirms access to this email address. The API checks the code before it activates the account.' active_step=2 step_total=2 step_one='Create account' step_two='Verify email' submit_label='Verify account' cancel_url='/' extra_href='/auth/request-otp/' extra_label='Did not receive a code? Request another' %}
+{% endblock %}
