@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from decimal import Decimal, InvalidOperation
 import json
 from functools import wraps
@@ -3787,6 +3787,194 @@ def _service_tools_pending(conversation):
     return pending
 
 
+def _parse_conversation_ts(value):
+    """Parse an API ISO-8601 timestamp; naive values are read as UTC."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt_timezone.utc)
+    return parsed
+
+
+_TIMELINE_END = datetime.max.replace(tzinfo=dt_timezone.utc)
+
+
+def _payment_timeline_anchor(payment):
+    """The moment the payment last moved — that is when its card belongs."""
+    if not isinstance(payment, dict):
+        return None
+    anchors = [
+        _parse_conversation_ts(payment.get(key))
+        for key in ("created_at", "verified_at", "held_at", "released_at")
+    ]
+    return max((ts for ts in anchors if ts), default=None)
+
+
+def _journey_status_visible(conversation):
+    state = str(conversation.get("state") or "").upper()
+    payment = conversation.get("payment")
+    if state == "ACTIVE" and payment:
+        return True
+    if (
+        isinstance(payment, dict)
+        and str(payment.get("status") or "").upper() == "PAYMENT_PENDING"
+    ):
+        return True
+    return state in {"COMPLETED", "DISPUTED", "NEGOTIATING"}
+
+
+def _conversation_timeline(conversation, messages_list):
+    """Interleave workflow cards into the message stream by event time.
+
+    Everything the participants must see lives on the same timeline as the
+    conversation itself: a card created earlier stays above the messages that
+    came after it, and a freshly sent transaction lands below them. The fixed
+    bottom-sheet placement remains only for back-office actions (offering,
+    countering, dispute and cancel), never for decision cards.
+    """
+    if not isinstance(conversation, dict):
+        conversation = {}
+    entries = []
+    for message in messages_list:
+        if not isinstance(message, dict):
+            continue
+        entries.append(
+            {
+                "kind": "message",
+                "sort": _parse_conversation_ts(message.get("created_at")),
+                "rank": 1,
+                "item": message,
+            }
+        )
+
+    booking = conversation.get("booking")
+    booking = booking if isinstance(booking, dict) else None
+    payment = conversation.get("payment")
+    payment = payment if isinstance(payment, dict) else None
+    offer = conversation.get("active_offer")
+    offer = offer if isinstance(offer, dict) else None
+    dispute = conversation.get("dispute_case")
+    dispute = dispute if isinstance(dispute, dict) else None
+
+    booking_anchor = None
+    if booking:
+        booking_anchor = max(
+            (
+                ts
+                for ts in (
+                    _parse_conversation_ts(booking.get("created_at")),
+                    _payment_timeline_anchor(payment),
+                )
+                if ts
+            ),
+            default=None,
+        )
+        entries.append(
+            {
+                "kind": "booking",
+                "sort": booking_anchor,
+                "rank": 0,
+                "item": booking,
+                "sort_key": booking_anchor.isoformat() if booking_anchor else "",
+            }
+        )
+
+    addons = conversation.get("additional_orders")
+    if isinstance(addons, list):
+        for index, addon in enumerate(addons):
+            if not isinstance(addon, dict):
+                continue
+            anchor = max(
+                (
+                    ts
+                    for ts in (
+                        _parse_conversation_ts(addon.get("created_at")),
+                        _payment_timeline_anchor(addon.get("payment")),
+                    )
+                    if ts
+                ),
+                default=None,
+            )
+            entries.append(
+                {
+                    "kind": "addon",
+                    "sort": anchor,
+                    "rank": 0,
+                    "item": addon,
+                    "number": index + 1,
+                    "sort_key": anchor.isoformat() if anchor else "",
+                }
+            )
+
+    offer_anchor = None
+    if offer:
+        offer_anchor = _parse_conversation_ts(offer.get("created_at"))
+        entries.append(
+            {
+                "kind": "offer",
+                "sort": offer_anchor,
+                "rank": 0,
+                "item": offer,
+                "sort_key": offer_anchor.isoformat() if offer_anchor else "",
+            }
+        )
+
+    dispute_anchor = None
+    if dispute:
+        dispute_anchor = _parse_conversation_ts(dispute.get("created_at"))
+        entries.append(
+            {
+                "kind": "dispute_case",
+                "sort": dispute_anchor,
+                "rank": 0,
+                "item": dispute,
+                "sort_key": dispute_anchor.isoformat() if dispute_anchor else "",
+            }
+        )
+
+    if _journey_status_visible(conversation):
+        # The strip tracks the latest lifecycle milestone, so it flows right
+        # after it like everything else in the stream.
+        journey_anchor = max(
+            (
+                ts
+                for ts in (booking_anchor, dispute_anchor, offer_anchor)
+                if ts
+            ),
+            default=None,
+        )
+        entries.append(
+            {
+                "kind": "journey",
+                "sort": journey_anchor,
+                "rank": 1,
+                "item": None,
+                "sort_key": journey_anchor.isoformat() if journey_anchor else "",
+            }
+        )
+
+    for entry in entries:
+        entry.setdefault("sort_key", "")
+
+    entries.sort(
+        key=lambda entry: (
+            entry["sort"] is None,
+            entry["sort"] or _TIMELINE_END,
+            entry["rank"],
+        )
+    )
+    return entries
+
+
 @api_guard
 def conversation_detail(request, conversation_id):
     client = APIClient(request)
@@ -4442,6 +4630,9 @@ def conversation_detail(request, conversation_id):
         _, messages_payload, _ = client.get(
             f"/conversations/{conversation_id}/messages/", params={"limit": "60"}
         )
+        messages_list = extract_items(
+            _private_conversation_messages(messages_payload, conversation_id)
+        )
         offer_history = []
         if conversation.get("conversation_type") == "SERVICE":
             _, offers_payload, _ = client.get(
@@ -4571,9 +4762,8 @@ def conversation_detail(request, conversation_id):
             request,
             "conversations/detail.html",
             conversation=conversation,
-            conversation_messages=extract_items(
-                _private_conversation_messages(messages_payload, conversation_id)
-            ),
+            conversation_messages=messages_list,
+            timeline=_conversation_timeline(conversation, messages_list),
             offer_history=offer_history,
             role=conversation.get("viewer_role"),
             nav_role=current_role(request),

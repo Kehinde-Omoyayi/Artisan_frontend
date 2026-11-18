@@ -1,140 +1,118 @@
-/* -------------------------------------------------------------
-   One poller for the whole page.
-
-   Three things on this page used to watch the server: the message stream,
-   the escrow strip and the bank-transfer card. Each ran its own timer, so an
-   idle tab still made several calls every few seconds, and each of those
-   calls could reach the payment provider. (The transfer card now polls on
-   its own, shared with the payment page; this scheduler covers what is
-   left.)
-
-   This is the single scheduler they now share:
-
-     * one in-flight request per endpoint, however many listeners subscribe;
-     * it backs off while nothing changes instead of holding a fixed beat;
-     * it sleeps while the tab is hidden and looks again the moment the tab
-       comes back -- no request is ever made on a page nobody is reading;
-     * it stops altogether once it is told to, and only a real action (a
-       message sent, the tab focused, a tap in the chat) starts it again;
-     * the endpoint may be a function evaluated fresh on each beat -- that is
-       how the message stream attaches its incremental `since` cursor only
-       when it has one, and falls back to a full window while any attachment
-       is still pending its virus scan (scan status is not part of a
-       message's `created_at`, so an incremental poll cannot see it).
-   --------------------------------------------------------------- */
-const ArtisanMarketPoller=(()=>{
-  const channels=new Map();
-  const listeners=new WeakMap();
-  const pageState={hidden:document.hidden};
-
-  document.addEventListener("visibilitychange",()=>{
-    pageState.hidden=document.hidden;
-    if(document.hidden)return;
-    channels.forEach(channel=>{
-      if(channel.stopped)return;
-      channel.backoff=0;
-      schedule(channel,0);
-    });
-  });
-  window.addEventListener("focus",()=>{
-    if(document.hidden)return;
-    channels.forEach(channel=>{
-      if(channel.stopped)return;
-      channel.backoff=0;
-      schedule(channel,0);
-    });
-  });
-
-  function schedule(channel,wait){
-    window.clearTimeout(channel.timer);
-    channel.timer=0;
-    if(channel.stopped)return;
-    const step=Math.min(
-      channel.maxDelay,
-      Math.max(channel.minDelay,channel.minDelay*Math.pow(1.6,channel.backoff||0))
-    );
-    channel.timer=window.setTimeout(run,typeof wait==="number"?wait:step,channel);
-  }
-
-  async function run(channel){
-    channel.timer=0;
-    if(channel.stopped)return;
-    /* A hidden tab is a tab nobody is reading. Nothing is fetched until it
-       is looked at again, which is what "stop calling until I do something"
-       actually has to mean. */
-    if(document.hidden){return;}
-    if(channel.inFlight)return;
-    channel.inFlight=true;
-    try{
-      const target=typeof channel.endpoint==="function"?channel.endpoint():channel.endpoint;
-      const response=await fetch(target,{headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});
-      const meta={status:response.status,ok:response.ok};
-      if(response.status===401||response.status===403){
-        channel.stopped=true;
-        (listeners.get(channel)||[]).forEach(handler=>{
-          try{handler(null,meta);}catch(_){/* one bad listener must not stop the poll */}
-        });
-        return;
-      }
-      if(response.ok){
-        const data=await response.json().catch(()=>null);
-        if(data){
-          channel.backoff=0;
-          (listeners.get(channel)||[]).forEach(handler=>{
-            try{handler(data,meta);}catch(_){/* one bad listener must not stop the poll */}
-          });
-          if(channel.done&&channel.done(data)){channel.stopped=true;return;}
-        }
-      }else{
-        /* A server error is passed on (with no payload) so the page can say
-           something honest; the beat continues on the next tick. */
-        (listeners.get(channel)||[]).forEach(handler=>{
-          try{handler(null,meta);}catch(_){/* one bad listener must not stop the poll */}
-        });
-      }
-    }catch(_){/* offline: the next tick tries again */}
-    finally{
-      channel.inFlight=false;
-    }
-    channel.backoff=(channel.backoff||0)+1;
-    if(channel.budget&&channel.backoff>=channel.budget){channel.stopped=true;return;}
-    schedule(channel);
-  }
-
-  return {
-    /* Subscribe to an endpoint. Returns a handle with .kick() to poll now
-       and .stop() to stop for good. */
-    watch(endpoint,handler,{minDelay=6000,maxDelay=30000,budget=0,done=null}={}){
-      if(!endpoint)return {kick(){},stop(){},restart(){}};
-      let channel=channels.get(endpoint);
-      if(!channel){
-        channel={endpoint,minDelay,maxDelay,budget,done,timer:0,backoff:0,inFlight:false,stopped:false};
-        channels.set(endpoint,channel);
-        listeners.set(channel,[]);
-      }else{
-        channel.minDelay=Math.min(channel.minDelay,minDelay);
-        channel.maxDelay=Math.max(channel.maxDelay,maxDelay);
-        channel.budget=Math.max(channel.budget,budget||0);
-        if(done)channel.done=channel.done||done;
-      }
-      const list=listeners.get(channel);
-      list.push(handler);
-      return {
-        kick(){if(!channel.stopped)schedule(channel,0);},
-        stop(){channel.stopped=true;window.clearTimeout(channel.timer);channel.timer=0;},
-        restart(){channel.stopped=false;channel.backoff=0;schedule(channel,0);},
-      };
-    },
-  };
-})();
-
-const Poller=ArtisanMarketPoller;
-
 (function(){
   const apiErrors=window.ArtisanApiErrors;
   const formatApiError=(payload,status,options)=>apiErrors?apiErrors.format(payload,status,options):"The request could not be completed. Please try again.";
   const readApiPayload=(response)=>apiErrors?apiErrors.readResponse(response):response.json().catch(()=>null);
 
+  /* ---------------------------------------------------------------------
+     One poller for the whole page.
+
+     Three things on this page used to watch the server: the message stream,
+     the escrow strip and the bank-transfer card. Each ran its own timer, so an
+     idle tab still made several calls every few seconds, and each of those
+     calls could reach the payment provider. (The transfer card now polls on
+     its own, shared with the payment page; this scheduler covers what is
+     left.)
+
+     This is the single scheduler they now share:
+
+       * one in-flight request per endpoint, however many listeners subscribe;
+       * it backs off while nothing changes instead of holding a fixed beat;
+       * it sleeps while the tab is hidden and looks again the moment the tab
+         comes back -- no request is ever made on a page nobody is reading;
+       * it stops altogether once it is told to, and only a real action (a
+         message sent, the tab focused, a tap in the chat) starts it again.
+     --------------------------------------------------------------------- */
+  const Poller=(()=>{
+    const channels=new Map();
+    const listeners=new WeakMap();
+    const pageState={hidden:document.hidden};
+
+    document.addEventListener("visibilitychange",()=>{
+      pageState.hidden=document.hidden;
+      if(document.hidden)return;
+      channels.forEach(channel=>{
+        if(channel.stopped)return;
+        channel.backoff=0;
+        schedule(channel,0);
+      });
+    });
+    window.addEventListener("focus",()=>{
+      if(document.hidden)return;
+      channels.forEach(channel=>{
+        if(channel.stopped)return;
+        channel.backoff=0;
+        schedule(channel,0);
+      });
+    });
+
+    function schedule(channel,wait){
+      window.clearTimeout(channel.timer);
+      channel.timer=0;
+      if(channel.stopped)return;
+      const step=Math.min(
+        channel.maxDelay,
+        Math.max(channel.minDelay,channel.minDelay*Math.pow(1.6,channel.backoff||0))
+      );
+      channel.timer=window.setTimeout(run,typeof wait==="number"?wait:step,channel);
+    }
+
+    async function run(channel){
+      channel.timer=0;
+      if(channel.stopped)return;
+      /* A hidden tab is a tab nobody is reading. Nothing is fetched until it
+         is looked at again, which is what "stop calling until I do something"
+         actually has to mean. */
+      if(document.hidden){return;}
+      if(channel.inFlight)return;
+      channel.inFlight=true;
+      try{
+        const response=await fetch(channel.endpoint,{headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});
+        if(response.status===401||response.status===403){channel.stopped=true;return;}
+        if(response.ok){
+          const data=await response.json().catch(()=>null);
+          if(data){
+            channel.backoff=0;
+            (listeners.get(channel)||[]).forEach(handler=>{
+              try{handler(data);}catch(_){/* one bad listener must not stop the poll */}
+            });
+            if(channel.done&&channel.done(data)){channel.stopped=true;return;}
+          }
+        }
+      }catch(_){/* offline: the next tick tries again */}
+      finally{
+        channel.inFlight=false;
+      }
+      channel.backoff=(channel.backoff||0)+1;
+      if(channel.budget&&channel.backoff>=channel.budget){channel.stopped=true;return;}
+      schedule(channel);
+    }
+
+    return {
+      /* Subscribe to an endpoint. Returns a handle with .kick() to poll now
+         and .stop() to stop for good. */
+      watch(endpoint,handler,{minDelay=6000,maxDelay=30000,budget=0,done=null}={}){
+        if(!endpoint)return {kick(){},stop(){},restart(){}};
+        let channel=channels.get(endpoint);
+        if(!channel){
+          channel={endpoint,minDelay,maxDelay,budget,done,timer:0,backoff:0,inFlight:false,stopped:false};
+          channels.set(endpoint,channel);
+          listeners.set(channel,[]);
+        }else{
+          channel.minDelay=Math.min(channel.minDelay,minDelay);
+          channel.maxDelay=Math.max(channel.maxDelay,maxDelay);
+          channel.budget=Math.max(channel.budget,budget||0);
+          if(done)channel.done=channel.done||done;
+        }
+        const list=listeners.get(channel);
+        list.push(handler);
+        return {
+          kick(){if(!channel.stopped)schedule(channel,0);},
+          stop(){channel.stopped=true;window.clearTimeout(channel.timer);channel.timer=0;},
+          restart(){channel.stopped=false;channel.backoff=0;schedule(channel,0);},
+        };
+      },
+    };
+  })();
 
   const stream=document.getElementById("conversation-stream");
   if(!stream)return;
@@ -150,24 +128,7 @@ const Poller=ArtisanMarketPoller;
   const viewerId=Number(stream.dataset.viewerId||0);
   let delay=4000,timer=0,lastSignature="",firstPayload=true,readPending=false,sendingMessage=false;
   let selectedFiles=Array.from(fileInput?.files||[]);
-  /* The room keeps the authoritative message list in memory. The first
-     fetch is the whole window; every later beat is an incremental `since`
-     sync, merged by message id. Entries are replaced by id, so a message
-     deleted for everyone (a tombstone) shows up even if it was created
-     before the cursor. While anything is still pending a virus scan we drop
-     the cursor and poll the full window -- a scan verdict is not a field of
-     the message row the `since` bound can see. */
-  let cachedMessages=[],lastCursorIso="";
-  const hasPendingScans=()=>cachedMessages.some(message=>
-    (message.attachments||[]).some(attachment=>
-      String(attachment.scan_status||"PENDING").toUpperCase()==="PENDING"
-    )
-  );
-  const pollEndpoint=()=>{
-    let url=`/discover/conversations/${id}/messages/?limit=60`;
-    if(lastCursorIso&&!hasPendingScans())url+=`&since=${encodeURIComponent(lastCursorIso)}`;
-    return url;
-  };
+  const seenMessageIds=new Set();
   const MEDIA_LIMIT_MB=30;
   const MEDIA_LIMIT_BYTES=MEDIA_LIMIT_MB*1024*1024;
   const VOICE_MAX_SECONDS=300;
@@ -214,17 +175,11 @@ const Poller=ArtisanMarketPoller;
       const link=document.createElement("a");
       link.className="chat-attachment-image";
       link.href=url;
-      link.setAttribute("role","button");
-      link.setAttribute("aria-label","Open the shared photo full size");
-      link.addEventListener("click",event=>{
-        // The viewer is the better place to look at a photo than a new tab:
-        // same origin, focus managed, one Escape away.
-        event.preventDefault();
-        openLightbox(url,"Shared photo");
-      });
+      link.target="_blank";
+      link.rel="noopener";
       const image=document.createElement("img");
       image.src=url;
-      image.alt="Shared photo; activate to open full size";
+      image.alt="Shared photo; open full size";
       image.loading="lazy";
       link.appendChild(image);
       return link;
@@ -272,45 +227,6 @@ const Poller=ArtisanMarketPoller;
     });
     wrap.appendChild(trigger);
     return wrap;
-  }
-
-  /* A full-screen viewer for shared photos. Built lazily on first use and
-     reused after that: focus moves into the dialog and back to whatever
-     opened it, Escape and the backdrop both close, and the page behind does
-     not scroll while it is up. */
-  let lightbox=null,lightboxReturnFocus=null;
-  function openLightbox(url,label){
-    if(!lightbox){
-      lightbox=document.createElement("div");
-      lightbox.className="chat-lightbox";
-      lightbox.setAttribute("role","dialog");
-      lightbox.setAttribute("aria-modal","true");
-      lightbox.setAttribute("aria-label",label||"Shared photo");
-      lightbox.innerHTML='<button type="button" class="chat-lightbox-close" aria-label="Close the photo viewer">\u00D7</button><img alt="">';
-      const img=lightbox.querySelector("img");
-      const closeBtn=lightbox.querySelector(".chat-lightbox-close");
-      const close=()=>closeLightbox();
-      lightbox.addEventListener("click",event=>{if(event.target===lightbox)close();});
-      closeBtn.addEventListener("click",close);
-      document.addEventListener("keydown",event=>{
-        if(event.key==="Escape"&&lightbox&&!lightbox.hidden)close();
-      });
-      document.body.appendChild(lightbox);
-    }
-    const img=lightbox.querySelector("img");
-    img.src=url;
-    img.alt=label||"Shared photo";
-    lightboxReturnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
-    lightbox.hidden=false;
-    document.body.style.overflow="hidden";
-    lightbox.querySelector(".chat-lightbox-close").focus();
-  }
-  function closeLightbox(){
-    if(!lightbox)return;
-    lightbox.hidden=true;
-    document.body.style.overflow="";
-    if(lightboxReturnFocus&&lightboxReturnFocus.isConnected)lightboxReturnFocus.focus();
-    lightboxReturnFocus=null;
   }
 
   async function submitDelete(messageId){
@@ -398,13 +314,19 @@ const Poller=ArtisanMarketPoller;
       article.appendChild(bubble);
       fragment.appendChild(article);
     });
-    if(!messages.length){
+    // Workflow cards live in the stream at their own event time. The poll
+    // rebuilt the stream from the message payload alone, which would drop
+    // them every few seconds; pick them up first and slot them back in
+    // after the rebuild, oldest milestone first.
+    const timelineCards=Array.from(stream.querySelectorAll(":scope > [data-timeline-card]"));
+    if(!messages.length&&!timelineCards.length){
       const empty=document.createElement("div");
       empty.className="empty chat-empty-state";
       empty.textContent="No messages yet. Start the conversation naturally — you can write a note or attach a photo.";
       fragment.appendChild(empty);
     }
     stream.replaceChildren(fragment);
+    reinsertTimelineCards(timelineCards);
     if(firstPayload||keepBottom)pinToLatest(true);
     firstPayload=false;
     syncJumpButton();
@@ -497,7 +419,7 @@ const Poller=ArtisanMarketPoller;
       if(current){current.replaceWith(node);}
       else{
         stream.querySelector(".chat-empty-state")?.remove();
-        stream.after(node);
+        stream.appendChild(node);
       }
       node.classList.add("is-refreshed");
       window.setTimeout(()=>node.classList.remove("is-refreshed"),4000);
@@ -505,32 +427,46 @@ const Poller=ArtisanMarketPoller;
     }catch(_){/* the next poll tries again */}
   }
 
-  /* Everything that fetches messages flows through one path: the shared
-     poller. refresh() is kept only as the "fetch right now" signal used after
-     an action the user just took -- it re-arms the poller instead of firing a
-     second, unsynchronised request. */
-  function refresh(){
-    messagePoller.restart();
-    return Promise.resolve();
+  async function refresh(){
+    try{
+      const response=await fetch(`/discover/conversations/${id}/messages/?limit=60`,{headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});
+      if(response.status===401||response.status===403){window.location.assign("/auth/login/?next="+encodeURIComponent(window.location.pathname));return;}
+      const payload=await readApiPayload(response);
+      if(!response.ok){setStatus(formatApiError(payload,response.status));return;}
+      if(!payload){setStatus(formatApiError(null,response.status));return;}
+      applyMessages(payload);
+    }catch(_){setStatus(formatApiError(null,null,{networkError:true}));}
   }
 
-  /* One payload, one merge into the cache, one render decision. New messages
-     arrive via the `since` window; ones we already hold are replaced by id
-     (that is what carries tombstones and scan verdicts through). */
+  /* Slot timeline cards back between the rebuilt messages. ISO timestamps
+     compare as strings within one offset; normalise Z to +00:00 for safety. */
+  function reinsertTimelineCards(cards){
+    if(!cards.length)return;
+    const articles=Array.from(stream.querySelectorAll(":scope > article[data-message-created-at]"));
+    const norm=value=>{const v=String(value||"").replace(/Z$/,"+00:00");return v?v:"\uffff";}; /* untimed cards sink to the end, like the server */
+    const ordered=cards.slice().sort((a,b)=>norm(a.getAttribute("data-sort-key")).localeCompare(norm(b.getAttribute("data-sort-key"))));
+    for(const card of ordered){
+      const sortKey=norm(card.getAttribute("data-sort-key"));
+      let anchor=null;
+      if(sortKey){
+        for(const article of articles){
+          if(norm(article.getAttribute("data-message-created-at"))<=sortKey)anchor=article;else break;
+        }
+      }
+      if(anchor)anchor.after(card);
+      else if(articles.length)stream.insertBefore(card,articles[0]);
+      else{
+        const empty=stream.querySelector(".chat-empty-state");
+        if(empty)stream.insertBefore(card,empty);else stream.appendChild(card);
+      }
+    }
+  }
+
+  /* The body of refresh(), split out so the shared poller can hand over the
+     payload it already fetched: one request, not two, per beat. */
   function applyMessages(payload){
     try{
-      const incoming=Array.isArray(payload.results)?payload.results:Array.isArray(payload)?payload:[];
-      const byId=new Map();
-      cachedMessages.forEach(message=>{if(message&&message.id!=null)byId.set(String(message.id),message);});
-      incoming.forEach(message=>{if(message&&message.id!=null)byId.set(String(message.id),message);});
-      cachedMessages=Array.from(byId.values()).sort((a,b)=>{
-        const ta=Date.parse(a.created_at||"")||0,tb=Date.parse(b.created_at||"")||0;
-        if(ta!==tb)return ta-tb;
-        return String(a.id)<String(b.id)?-1:1;
-      }).slice(-200);
-      const newest=cachedMessages.length?cachedMessages[cachedMessages.length-1]:null;
-      lastCursorIso=newest&&newest.created_at?new Date(newest.created_at).toISOString().replace("Z","+00:00"):"";
-      let messages=cachedMessages.slice();
+      let messages=Array.isArray(payload.results)?payload.results.slice().reverse():Array.isArray(payload)?payload.slice().reverse():[];
       // Any turn of the offer (sent, countered, accepted, declined, expired,
       // revision asked) means the card is stale: re-sync it in place.
       const offerSignature=messages
@@ -543,24 +479,15 @@ const Poller=ArtisanMarketPoller;
       // card itself. Both stay in the database for audit but never reappear as
       // a bare text bubble in the stream.
       messages=messages.filter(message=>message.event_code!=="CONVERSATION_STARTED"&&message.event_code!=="OFFER_CREATED"&&message.event_code!=="OFFER_COUNTERED");
-      const signature=JSON.stringify(messages.map(message=>[message.id,message.body,message.deleted?1:0,(message.attachments||[]).map(attachment=>[attachment.id,attachment.url,attachment.scan_status])]));
+      const wasFirstPayload=firstPayload;
+      const newIncoming=!wasFirstPayload&&messages.some(message=>message.id&&!seenMessageIds.has(String(message.id))&&Number(message.sender_id)!==viewerId&&message.message_type!=="SYSTEM");
+      messages.forEach(message=>{if(message.id)seenMessageIds.add(String(message.id));});
+      const signature=JSON.stringify(messages.map(message=>[message.id,message.body,(message.attachments||[]).map(attachment=>[attachment.id,attachment.url,attachment.scan_status])]));
       if(signature!==lastSignature){render(messages);lastSignature=signature;}
       lastRenderedId=messages.length?String(messages[messages.length-1].id):null;
       markRead();
       if(offersChanged)syncOfferCard();
     }catch(_){setStatus(formatApiError(null,null,{networkError:true}));}
-  }
-
-  /* The poller hands over (payload, meta): a 401/403 means the session is
-     gone, so we stop asking and send the person to sign in; any other failure
-     carries no payload and only asks the page to say something honest. */
-  function handleStreamPayload(payload,meta){
-    if(meta&&(meta.status===401||meta.status===403)){
-      window.location.assign("/auth/login/?next="+encodeURIComponent(window.location.pathname));
-      return;
-    }
-    if(!payload){setStatus(formatApiError(null,meta?meta.status:null));return;}
-    applyMessages(payload);
   }
 
   function clearAttachmentPreview(){
@@ -802,24 +729,17 @@ const Poller=ArtisanMarketPoller;
     controls.forEach(control=>{control.disabled=true;});
     setStatus("Sending securely…");
     try{
-      const response=await fetch(window.location.href,{method:"POST",body:data,credentials:"same-origin",headers:{Accept:"application/json","X-Requested-With":"XMLHttpRequest","X-CSRFToken":csrf}});
-      if(response.redirected&&response.url&&new URL(response.url).pathname!==window.location.pathname){
-        /* The server sent us somewhere else (e.g. finish profile setup). */
-        window.location.assign(response.url);
+      const response=await fetch(window.location.href,{method:"POST",body:data,credentials:"same-origin",headers:{Accept:"text/html,application/json","X-Requested-With":"XMLHttpRequest","X-CSRFToken":csrf}});
+      if(!response.ok){setStatus(formatApiError(await readApiPayload(response),response.status));return;}
+      const html=await response.text();
+      const parsed=new DOMParser().parseFromString(html,"text/html");
+      const errorPanel=parsed.querySelector(".response-panel--error");
+      if(errorPanel){
+        const errorText=errorPanel.querySelector("p")?.textContent.trim()||"The message could not be sent.";
+        setStatus(errorText);
         return;
       }
-      const payload=await readApiPayload(response);
-      if(!response.ok){setStatus(formatApiError(payload,response.status));return;}
-      /* The same key replays this exact message. Rotate it now that the
-         server accepted the operation, so the next send is a new operation
-         while a double tap on this one replays it. */
-      const keyField=form.querySelector('input[name="idempotency_key"]');
-      if(keyField){
-        const token=(window.crypto&&typeof window.crypto.randomUUID==="function")
-          ? window.crypto.randomUUID()
-          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;
-        keyField.value=`conversation-message-${token}`;
-      }
+      if(response.url&&new URL(response.url).pathname!==window.location.pathname){window.location.assign(response.url);return;}
       input.value="";
       if(fileInput)fileInput.value="";
       selectedFiles=[];
@@ -841,25 +761,25 @@ const Poller=ArtisanMarketPoller;
      pressed, the chat is clicked or a message is sent. An idle tab that
      refreshed every few seconds was doing nothing but burn requests. */
   const QUIET_POLLS_BEFORE_SLEEP=6;
-  let quietPolls=0,asleep=true;
+  let quietPolls=0,asleep=true,lastSeenTopId="";
   const MESSAGE_POLL_DELAY=6000;
   const messagePoller=Poller.watch(
-    /* Dynamic: the since cursor is attached only once we hold messages, and
-       dropped while any scan is pending. */
-    pollEndpoint,
+    `/discover/conversations/${id}/messages/?limit=60`,
     /* The poller fetched this payload itself, so it is applied directly: the
        stream is never fetched twice for the same beat. */
-    handleStreamPayload,
+    (payload)=>applyMessages(payload),
     {
       minDelay:MESSAGE_POLL_DELAY,
       maxDelay:20000,
       budget:QUIET_POLLS_BEFORE_SLEEP,
-      /* Nothing new arrived: stop. The incremental window returns an empty
-         page when the room is quiet, so an empty page counts towards the
-         sleep budget; any row at all resets it. */
+      /* Nothing new arrived: stop. Anything new (a message, an offer, an
+         attachment finishing its scan) changes the signature, resets the
+         budget and the room keeps itself up to date. */
       done:(payload)=>{
-        const results=Array.isArray(payload&&payload.results)?payload.results:Array.isArray(payload)?payload:[];
-        if(results.length){quietPolls=0;return false;}
+        const results=Array.isArray(payload&&payload.results)?payload.results:[];
+        const newest=results.length?String(results[0].id||""):"";
+        if(!newest)return false;
+        if(newest!==lastSeenTopId){lastSeenTopId=newest;quietPolls=0;return false;}
         quietPolls+=1;
         return quietPolls>=QUIET_POLLS_BEFORE_SLEEP;
       },
@@ -867,7 +787,6 @@ const Poller=ArtisanMarketPoller;
   );
 
   function wakeStream(){
-    quietPolls=0;
     if(asleep){
       asleep=false;
       messagePoller.restart();
@@ -875,31 +794,23 @@ const Poller=ArtisanMarketPoller;
       messagePoller.kick();
     }
   }
-  /* Typing, tapping and scrolling make the room "a thing the user is doing
-     right now" without turning every physical event into a GET. At most one
-     extra fetch per twenty seconds while the tab is visible; an asleep room
-     wakes immediately. */
-  const USER_ACTIVITY_MIN_GAP=20000;
-  let lastUserWake=0;
-  function noteUserActivity(){
-    if(document.hidden)return;
-    const now=Date.now();
-    if(now-lastUserWake<USER_ACTIVITY_MIN_GAP)return;
-    lastUserWake=now;
-    wakeStream();
-  }
-  /* A real action, not a clock: the tab comes back, the window is focused. */
+  /* A real action, not a clock: the tab comes back, the window is focused,
+     the payer types or taps anything in this conversation. */
   document.addEventListener("visibilitychange",()=>{if(!document.hidden)wakeStream();});
   window.addEventListener("focus",wakeStream);
   ["pointerdown","keydown","touchstart"].forEach(eventName=>{
-    document.addEventListener(eventName,noteUserActivity,{passive:true});
+    document.addEventListener(eventName,()=>{
+      if(document.hidden)return;
+      wakeStream();
+    },{passive:true});
   });
-  scrollArea.addEventListener("scroll",noteUserActivity,{passive:true});
+  scrollArea.addEventListener("scroll",()=>{if(!document.hidden)wakeStream();},{passive:true});
   window.addEventListener("beforeunload",()=>messagePoller.stop(),{once:true});
   fileInput&&showAttachmentPreview();
   syncComposerButtons();
-  /* One fetch on load: the poller kicks immediately and owns every fetch
-     after that -- the room is not fetched twice for the same moment. */
+  /* One fetch on load (refresh), then the poller takes over on its own beat --
+     the room is not fetched twice for the same moment. */
+  refresh();
   asleep=false;
   messagePoller.kick();
   /* Sending already refreshes; this makes sure the room is awake afterwards. */
@@ -936,7 +847,7 @@ const Poller=ArtisanMarketPoller;
     });
   });
   const tools=document.getElementById("chat-service-tools");
-  document.addEventListener("keydown",event=>{if(event.key==="Escape"&&tools?.open){tools.open=false;tools.querySelector("summary")?.focus?.();}});
+  document.addEventListener("keydown",event=>{if(event.key==="Escape"&&tools?.open)tools.open=false;});
 })();
 
 /* Escrow payment lives in the chat: while the provider link is being prepared,
@@ -955,7 +866,6 @@ const Poller=ArtisanMarketPoller;
   Poller.watch(
     endpoint,
     (data) => {
-      if (!data) return; // a server error was passed through; keep waiting
       const status = String(data.status || "").toUpperCase();
       const checkout = String(data.authorization_url || "");
       const button = strip.querySelector("[data-payment-pending-form] button");

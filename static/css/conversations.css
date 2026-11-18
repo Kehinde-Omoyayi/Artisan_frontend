@@ -1210,15 +1210,8 @@ body.conversation-shell-body {
   border-color: #6d3d2a; background: #6d3d2a; color: #fff;
   box-shadow: 0 0 0 4px #f3e9df;
 }
-.chat-phase-step.optional { opacity: .78; }
+.chat-phase-step.optional { opacity: .72; }
 .chat-phase-step.current.optional { opacity: 1; }
-.chat-phase-optional-badge {
-  display: inline-block; margin-left: 4px; padding: 1px 6px 2px;
-  border: 1px solid #d9c3b1; border-radius: 999px;
-  background: #faf1ea; color: #8a6a54;
-  font-size: 8px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  font-style: normal; vertical-align: 1px;
-}
 .chat-phase-copy { display: grid; gap: 2px; min-width: 0; }
 .chat-phase-copy strong {
   color: #6c5c50; font-size: 10px; font-weight: 600; line-height: 1.35;
@@ -2154,132 +2147,10 @@ body.conversation-shell-body .response-stack .response-panel__dismiss { width: 2
   .chat-transfer-spin { animation: none; opacity: .65; }
 }
 
-/* ============================================================
-   Phase 3 — WhatsApp-Web proportions.
-
-   The chat is the product on this page, so on real screens it now behaves
-   like one: it takes the viewport height, the message column is wide and
-   the type inside the bubbles is sized to be read, not squinted at.
-   Everything here is additive and scoped to >=900px so the tuned mobile
-   cascade above is left completely alone.
-   ============================================================ */
-@media (min-width: 900px) {
-  .conversation-page { max-width: 1560px; }
-  .conversation-layout { grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; }
-  .conversation-header { padding: 16px 6px 14px; }
-  .participant-avatar { width: 54px; height: 54px; flex-basis: 54px; border-radius: 17px; font-size: 17px; }
-  .participant-meta h1 { font-size: 22px; }
-  .participant-meta p { font-size: 12px; }
-
-  .journey-status { margin-bottom: 15px; padding: 15px 18px; border-radius: 18px; }
-  .journey-status strong { font-size: 14px; }
-  .journey-status span { font-size: 11px; line-height: 1.5; }
-  .journey-status-icon { width: 34px; height: 34px; flex-basis: 34px; font-size: 15px; }
-
-  .chat-workspace {
-    height: max(560px, calc(100dvh - 148px));
-    min-height: 560px;
-    max-height: none;
-    border-radius: 22px;
-  }
-  .conversation-scroll-area { padding: 16px 20px 14px; }
-  .chat-stream { gap: 13px; }
-
-  .chat-message { gap: 12px; }
-  .chat-message-avatar { width: 40px; height: 40px; flex-basis: 40px; font-size: 14px; }
-  .chat-bubble {
-    max-width: min(72%, 760px);
-    min-width: 120px;
-    padding: 12px 16px;
-    border-radius: 18px 18px 18px 6px;
-  }
-  .chat-message.mine .chat-bubble { border-radius: 18px 18px 6px 18px; }
-  .chat-bubble strong { font-size: 10px; }
-  .chat-bubble p { font-size: 14px; line-height: 1.6; margin: 6px 0; }
-  .chat-bubble time { font-size: 10px; margin-top: 6px; }
-  .chat-attachment-image img { width: min(300px, 100%); max-height: 240px; }
-  .chat-attachment-file { font-size: 11px !important; padding: 9px 12px; border-radius: 10px; }
-  .chat-empty-state { max-width: 480px; font-size: 13px; padding: 28px; }
-
-  .chat-message.system .chat-bubble p { font-size: 11px; }
-
-  .chat-composer { padding: 13px 16px calc(12px + env(safe-area-inset-bottom)); }
-  .chat-compose-row { gap: 12px; }
-  .chat-compose-row textarea {
-    min-height: 48px;
-    max-height: 170px;
-    padding: 13px 18px;
-    border-radius: 26px;
-    font-size: 13px;
-    line-height: 1.45;
-  }
-  .attachment-picker { width: 48px; height: 48px; }
-  .attachment-picker svg { width: 22px; height: 22px; }
-  .chat-send-button { width: 48px; min-width: 48px; height: 48px; min-height: 48px; }
-  .chat-send-button svg { width: 21px; height: 21px; }
-}
-@media (min-width: 1500px) {
-  .chat-workspace { height: calc(100dvh - 132px); min-height: 640px; }
-  .chat-bubble { max-width: min(66%, 820px); }
-}
-
-/* Phase 4 — in-page photo viewer (no new tab). */
-.chat-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(18, 12, 9, .82);
-  backdrop-filter: blur(3px);
-}
-.chat-lightbox[hidden] { display: none; }
-.chat-lightbox img {
-  max-width: min(1100px, 100%);
-  max-height: min(86vh, 100%);
-  border-radius: 10px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
-  object-fit: contain;
-}
-.chat-lightbox-close {
-  position: absolute;
-  top: 14px;
-  right: 16px;
-  width: 44px;
-  height: 44px;
-  border: 1px solid rgba(255, 255, 255, .35);
-  border-radius: 50%;
-  background: rgba(24, 16, 12, .6);
-  color: #fff;
-  font: 400 26px/1 "DM Sans", system-ui, sans-serif;
-  cursor: pointer;
-}
-.chat-lightbox-close:hover { background: rgba(24, 16, 12, .85); }
-.chat-lightbox-close:focus-visible { outline: 3px solid #ffd9a8; outline-offset: 2px; }
-
-/* Phase 5 — returned-from-payment flash on the transfer card. */
-.chat-transfer.is-refreshed { box-shadow: 0 0 0 3px rgba(164, 98, 60, .18), 0 10px 24px rgba(76, 48, 37, .1); }
-
-/* Phase 8 — the Service tools pending count is visible, not an invisible attribute. */
-.chat-tools-badge {
-  flex: 0 0 auto;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #b3391f;
-  color: #fff;
-  font: 800 11px/22px "DM Sans", system-ui, sans-serif;
-  text-align: center;
-  letter-spacing: 0;
-  box-shadow: 0 2px 6px rgba(179, 57, 31, .35);
-  animation: chat-tools-badge-pulse 2.2s ease-in-out infinite;
-}
-@keyframes chat-tools-badge-pulse {
-  0%, 100% { box-shadow: 0 2px 6px rgba(179, 57, 31, .35), 0 0 0 0 rgba(179, 57, 31, .35); }
-  50% { box-shadow: 0 2px 6px rgba(179, 57, 31, .35), 0 0 0 5px rgba(179, 57, 31, .12); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-tools-badge { animation: none; }
-}
+/* Workflow cards and the journey strip flow with the conversation: they sit
+   in the message stream at the moment they were created, so the eye never
+   has to leave the thread to find them. */
+.chat-stream > .workflow-card,
+.chat-stream > .journey-status { margin: 6px 2px; }
+.chat-stream > .workflow-card:first-child,
+.chat-stream > .journey-status:first-child { margin-top: 2px; }
