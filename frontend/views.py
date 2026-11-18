@@ -27,6 +27,7 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from .pricing import min_price_error
 from .api import (
     APIClient,
     APIError,
@@ -38,6 +39,7 @@ from .api import (
 )
 from .forms import *
 from .phone_fields import is_valid_phone
+from .staff_nav import staff_access_flags
 
 LANDING_IMAGE_ASSETS = {
     "carpentry": (
@@ -116,6 +118,7 @@ LANDING_VISUAL_THEMES = (
 PENDING_ACTION_SESSION_KEY = "pending_protected_action"
 PAYMENT_NOTICE_SESSION_KEY = "payment_notice_pending"
 PENDING_REQUEST_FORM_SESSION_KEY = "pending_service_request_form_values"
+SERVICE_REQUEST_CREATE_KEY_SESSION = "service_request_create_key"
 PENDING_REQUEST_UPDATE_FORM_SESSION_KEY = "pending_service_request_update_form_values"
 PROFILE_COMPLETION_NEXT_SESSION_KEY = "profile_completion_next"
 PENDING_ACTION_TTL_SECONDS = 30 * 60
@@ -202,6 +205,22 @@ def _safe_service_request_form_values(data):
         for field in SERVICE_REQUEST_FORM_FIELDS
         if field in data
     }
+
+
+def _service_request_create_key(request):
+    """The idempotency key for the create form, kept in the session.
+
+    One key per form draft: a double click, a dropped connection or a round
+    trip through the profile-completion gate all replay the same key, so the
+    marketplace records the request exactly once. The key is dropped after a
+    successful create, so the next request starts fresh.
+    """
+    key = request.session.get(SERVICE_REQUEST_CREATE_KEY_SESSION)
+    if not key:
+        key = new_idempotency_key("service-request-create")
+        request.session[SERVICE_REQUEST_CREATE_KEY_SESSION] = key
+        request.session.modified = True
+    return key
 
 
 def _store_pending_action(request, kind, **values):
@@ -752,10 +771,15 @@ def request_wants_json(request):
 
 
 def error_json_payload(exc):
+    code = None
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        code = payload.get("code")
     return {
         "message": exc.user_message,
         "detail": exc.user_message,
         "status": exc.status_code,
+        "code": str(code).upper() if code else None,
     }
 
 
@@ -1240,22 +1264,49 @@ def _placement_profile_links(rows):
     return rows
 
 
+# The two anonymous homepage collections are identical for every visitor, so
+# each page view should not cost the API two more calls. A short TTL keeps the
+# campaign window fresh while collapsing a burst of homepage hits into one.
+_PUBLIC_HOME_CACHE_TTL = 90
+
+
+def _cached_public_home(key, fetch):
+    from django.core.cache import cache
+
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    value = fetch()
+    if value is not None:
+        try:
+            cache.set(key, value, _PUBLIC_HOME_CACHE_TTL)
+        except Exception:  # cache must never break the page
+            pass
+    return value or []
+
+
 def _public_homepage_promotions(request):
-    try:
-        _, payload, _ = APIClient(request).get("/promotions/homepage/")
-        rows = payload if isinstance(payload, list) else extract_items(payload)
-        return _placement_profile_links(rows)
-    except APIError:
-        # Anonymous public landing remains usable if the separately deployed API is unavailable.
-        return []
+    def fetch():
+        try:
+            _, payload, _ = APIClient(request).get("/promotions/homepage/")
+            rows = payload if isinstance(payload, list) else extract_items(payload)
+            return _placement_profile_links(rows)
+        except APIError:
+            # Anonymous public landing remains usable if the separately deployed API is unavailable.
+            return []
+
+    return _cached_public_home("public-home:promotions", fetch)
 
 
 def _public_market_picks(request):
-    try:
-        _, payload, _ = APIClient(request).get("/promotions/market-picks/")
-        return payload if isinstance(payload, list) else extract_items(payload)
-    except APIError:
-        return []
+    def fetch():
+        try:
+            _, payload, _ = APIClient(request).get("/promotions/market-picks/")
+            return payload if isinstance(payload, list) else extract_items(payload)
+        except APIError:
+            return []
+
+    return _cached_public_home("public-home:market-picks", fetch)
 
 
 def _public_promoted_discovery(request, filters):
@@ -1297,7 +1348,8 @@ def home(request):
     # Only a staff workspace needs the capability lookup; asking for it on every
     # artisan and customer page added an API round-trip to each render.
     capabilities = _support_capabilities(client) if role == "staff" else {}
-    is_manager = role == "staff" and bool(capabilities.get("is_superuser"))
+    staff_flags = staff_access_flags(request) if role == "staff" else {}
+    is_manager = role == "staff" and bool(staff_flags.get("can_view_manager_overview"))
     is_support_staff = role == "staff" and bool(capabilities.get("is_support_staff"))
     if not is_manager:
         request.session.pop(MANAGER_VALUES_REVEAL_SESSION_KEY, None)
@@ -1427,7 +1479,7 @@ def support_operations_dashboard(request):
         request,
         "support/dashboard.html",
         role="staff",
-        platform_manager=bool(capabilities.get("is_superuser")),
+        platform_manager=bool(staff_access_flags(request).get("can_view_manager_overview")),
         **_support_dashboard_data(client, capabilities=capabilities),
     )
 
@@ -3457,7 +3509,7 @@ def conversation_messages(request, conversation_id):
         response["Cache-Control"] = "no-store"
         return response
     except APIError as exc:
-        return JsonResponse({"message": exc.user_message}, status=exc.status_code)
+        return JsonResponse(error_json_payload(exc), status=exc.status_code)
 
 
 def _conversation_local_datetime(value):
@@ -3556,6 +3608,36 @@ def _api_error_items(exc):
         if isinstance(details, (list, tuple)):
             return [("non_field_errors", str(message)) for message in details]
     return [("non_field_errors", str(payload or "The offer could not be sent."))]
+
+
+def _offer_price_errors(post):
+    """Frontend mirror of the backend ₦100.00 individual-minimum rule.
+
+    The API remains the authority; this keeps the artisan on the page with an
+    inline field error instead of losing the round trip. Returns a
+    {field: message} mapping; an empty dict means the prices are valid.
+    """
+    errors = {}
+    labour = str(post.get("labour_amount", "")).strip()
+    labour_error = min_price_error(labour, allow_zero=False)
+    if labour_error:
+        errors["labour_amount"] = labour_error
+    transport_error = min_price_error(post.get("transport_amount", ""), allow_zero=True)
+    if transport_error:
+        errors["transport_amount"] = transport_error
+    additional_error = min_price_error(post.get("additional_amount", ""), allow_zero=True)
+    if additional_error:
+        errors["additional_amount"] = additional_error
+    for index, item in enumerate(
+        _offer_materials_payload(post.get("materials_json", "")) or []
+    ):
+        price_error = min_price_error(
+            item.get("unit_price"), allow_zero=False, blank_means_error=True
+        )
+        if price_error:
+            errors["materials"] = f"Item {index + 1}: {price_error}"
+            break
+    return errors
 
 
 def _offer_error_context(exc):
@@ -3808,17 +3890,6 @@ def _parse_conversation_ts(value):
 _TIMELINE_END = datetime.max.replace(tzinfo=dt_timezone.utc)
 
 
-def _payment_timeline_anchor(payment):
-    """The moment the payment last moved — that is when its card belongs."""
-    if not isinstance(payment, dict):
-        return None
-    anchors = [
-        _parse_conversation_ts(payment.get(key))
-        for key in ("created_at", "verified_at", "held_at", "released_at")
-    ]
-    return max((ts for ts in anchors if ts), default=None)
-
-
 def _journey_status_visible(conversation):
     state = str(conversation.get("state") or "").upper()
     payment = conversation.get("payment")
@@ -3839,7 +3910,9 @@ def _conversation_timeline(conversation, messages_list):
     conversation itself: a card created earlier stays above the messages that
     came after it, and a freshly sent transaction lands below them. The fixed
     bottom-sheet placement remains only for back-office actions (offering,
-    countering, dispute and cancel), never for decision cards.
+    countering, dispute and cancel), never for decision cards or the payment
+    card. Every entry is anchored to its authoritative server creation
+    timestamp; same-instant events break ties on a fixed rank/kind order.
     """
     if not isinstance(conversation, dict):
         conversation = {}
@@ -3865,19 +3938,9 @@ def _conversation_timeline(conversation, messages_list):
     dispute = conversation.get("dispute_case")
     dispute = dispute if isinstance(dispute, dict) else None
 
-    booking_anchor = None
+    booking_anchor = _parse_conversation_ts(booking.get("created_at")) if booking else None
+    payment_anchor = _parse_conversation_ts(payment.get("created_at")) if payment else None
     if booking:
-        booking_anchor = max(
-            (
-                ts
-                for ts in (
-                    _parse_conversation_ts(booking.get("created_at")),
-                    _payment_timeline_anchor(payment),
-                )
-                if ts
-            ),
-            default=None,
-        )
         entries.append(
             {
                 "kind": "booking",
@@ -3888,22 +3951,26 @@ def _conversation_timeline(conversation, messages_list):
             }
         )
 
+    # The payment/transaction card is a timeline entry like any other: it is
+    # placed at the moment the payment was initiated and never moves again,
+    # however many messages are exchanged afterwards.
+    if payment:
+        entries.append(
+            {
+                "kind": "payment",
+                "sort": payment_anchor,
+                "rank": 0,
+                "item": payment,
+                "sort_key": payment_anchor.isoformat() if payment_anchor else "",
+            }
+        )
+
     addons = conversation.get("additional_orders")
     if isinstance(addons, list):
         for index, addon in enumerate(addons):
             if not isinstance(addon, dict):
                 continue
-            anchor = max(
-                (
-                    ts
-                    for ts in (
-                        _parse_conversation_ts(addon.get("created_at")),
-                        _payment_timeline_anchor(addon.get("payment")),
-                    )
-                    if ts
-                ),
-                default=None,
-            )
+            anchor = _parse_conversation_ts(addon.get("created_at"))
             entries.append(
                 {
                     "kind": "addon",
@@ -3947,7 +4014,7 @@ def _conversation_timeline(conversation, messages_list):
         journey_anchor = max(
             (
                 ts
-                for ts in (booking_anchor, dispute_anchor, offer_anchor)
+                for ts in (booking_anchor, payment_anchor, dispute_anchor, offer_anchor)
                 if ts
             ),
             default=None,
@@ -3965,11 +4032,25 @@ def _conversation_timeline(conversation, messages_list):
     for entry in entries:
         entry.setdefault("sort_key", "")
 
+    # Reliable ordering: authoritative server timestamp first (entries with no
+    # timestamp sink to the end), then a fixed rank (decision cards rank 0,
+    # messages and the journey strip rank 1), then a fixed per-kind order so
+    # two events with identical timestamps still interleave deterministically.
+    kind_order = {
+        "booking": 0,
+        "dispute_case": 1,
+        "offer": 2,
+        "payment": 3,
+        "addon": 4,
+        "journey": 5,
+        "message": 6,
+    }
     entries.sort(
         key=lambda entry: (
             entry["sort"] is None,
             entry["sort"] or _TIMELINE_END,
             entry["rank"],
+            kind_order.get(entry["kind"], 9),
         )
     )
     return entries
@@ -4042,35 +4123,57 @@ def conversation_detail(request, conversation_id):
                     ("attachments", (item.name, item.file, item.content_type))
                     for item in request.FILES.getlist("attachments")
                 ]
-                _, conversation_context, _ = client.get(
-                    f"/conversations/{conversation_id}/"
-                )
-                role = conversation_context.get("viewer_role")
-                if role not in {"customer", "artisan"}:
-                    role = current_role(request)
                 destination = reverse(
                     "conversation-detail", kwargs={"conversation_id": conversation_id}
                 )
-                completion_action = {
-                    "kind": "conversation_message",
-                    "conversation_id": str(conversation_id),
-                    "body": body[:5000],
-                    "had_attachments": bool(files),
-                }
-                completion = _ensure_action_profile_complete(
-                    request,
-                    completion_action,
-                    role=role,
-                    destination=destination,
-                )
-                if completion:
-                    return completion
-                client.post(
-                    f"/conversations/{conversation_id}/messages/",
-                    {"body": body},
-                    files=files or None,
-                    idempotency_key=key,
-                )
+                try:
+                    # The API is the single authority on who may send here and
+                    # on profile completeness; asking it first over GET only
+                    # added failure surface (and 503s) to every send.
+                    client.post(
+                        f"/conversations/{conversation_id}/messages/",
+                        {"body": body},
+                        files=files or None,
+                        idempotency_key=key,
+                    )
+                except APIError as exc:
+                    payload = exc.payload if isinstance(exc.payload, dict) else {}
+                    if exc.status_code == 403 and str(payload.get("code") or "").upper() == "PROFILE_INCOMPLETE":
+                        # The API named the role and the exact missing fields.
+                        # Stash the send in the session so it resumes after the
+                        # profile is complete -- same round trip as before,
+                        # without the two extra GETs on every message.
+                        details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+                        role = details.get("profile_role") or current_role(request)
+                        if role not in {"customer", "artisan"}:
+                            role = current_role(request)
+                        _store_pending_action(
+                            request,
+                            "conversation_message",
+                            conversation_id=str(conversation_id),
+                            body=body[:5000],
+                            had_attachments=bool(files),
+                        )
+                        profile_route = "customer-profile" if role == "customer" else "artisan-profile"
+                        missing_labels = [
+                            ACTION_PROFILE_FIELD_LABELS.get(str(field), str(field))
+                            for field in (details.get("missing_fields") or [])
+                        ]
+                        request.session[PROFILE_COMPLETION_NEXT_SESSION_KEY] = destination
+                        request.session.modified = True
+                        messages.info(
+                            request,
+                            f"Complete these fields in your {role} profile before continuing: "
+                            + (", ".join(missing_labels) or "the highlighted fields")
+                            + ".",
+                        )
+                        return redirect(f"{reverse(profile_route)}?{urlencode({'next': destination})}")
+                    handle_api_error(request, exc)
+                    if is_ajax:
+                        return JsonResponse(error_json_payload(exc), status=exc.status_code)
+                    return redirect(
+                        "conversation-detail", conversation_id=conversation_id
+                    )
             elif action == "delete_message":
                 # Withdrawing something you wrote. The server decides who may
                 # do it -- only the author, and never a service update -- so
@@ -4096,21 +4199,30 @@ def conversation_detail(request, conversation_id):
                 )
             elif action == "offer":
                 payload = _offer_payload_from_post(request.POST)
-                try:
-                    client.post(
-                        f"/conversations/{conversation_id}/offers/",
-                        payload,
-                        idempotency_key=key,
-                    )
-                except APIError as exc:
-                    if exc.status_code not in (400, 409):
-                        raise
-                    # Keep the artisan on the page with every entry intact.
-                    offer_errors, offer_field_errors = _offer_error_context(exc)
+                price_errors = _offer_price_errors(request.POST)
+                if price_errors:
+                    # The ₦100.00 individual minimum, enforced before any
+                    # network call: nothing invalid reaches the API.
+                    offer_field_errors = price_errors
+                    offer_errors = list(dict.fromkeys(price_errors.values()))
                     offer_draft = _offer_draft_context(request.POST)
                     offer_form = "new"
                 else:
-                    messages.success(request, "Offer sent to the other participant.")
+                    try:
+                        client.post(
+                            f"/conversations/{conversation_id}/offers/",
+                            payload,
+                            idempotency_key=key,
+                        )
+                    except APIError as exc:
+                        if exc.status_code not in (400, 409):
+                            raise
+                        # Keep the artisan on the page with every entry intact.
+                        offer_errors, offer_field_errors = _offer_error_context(exc)
+                        offer_draft = _offer_draft_context(request.POST)
+                        offer_form = "new"
+                    else:
+                        messages.success(request, "Offer sent to the other participant.")
             elif action == "accept":
                 client.post(
                     f"/conversations/{conversation_id}/offers/{request.POST.get('offer_id')}/accept/",
@@ -4150,20 +4262,27 @@ def conversation_detail(request, conversation_id):
                 counter_payload["parent_offer_id"] = request.POST.get(
                     "parent_offer_id", ""
                 )
-                try:
-                    client.post(
-                        f"/conversations/{conversation_id}/offers/counter/",
-                        counter_payload,
-                        idempotency_key=key,
-                    )
-                except APIError as exc:
-                    if exc.status_code not in (400, 409):
-                        raise
-                    offer_errors, offer_field_errors = _offer_error_context(exc)
+                price_errors = _offer_price_errors(request.POST)
+                if price_errors:
+                    offer_field_errors = price_errors
+                    offer_errors = list(dict.fromkeys(price_errors.values()))
                     offer_draft = _offer_draft_context(request.POST)
                     offer_form = "counter"
                 else:
-                    messages.success(request, "Counter offer sent.")
+                    try:
+                        client.post(
+                            f"/conversations/{conversation_id}/offers/counter/",
+                            counter_payload,
+                            idempotency_key=key,
+                        )
+                    except APIError as exc:
+                        if exc.status_code not in (400, 409):
+                            raise
+                        offer_errors, offer_field_errors = _offer_error_context(exc)
+                        offer_draft = _offer_draft_context(request.POST)
+                        offer_form = "counter"
+                    else:
+                        messages.success(request, "Counter offer sent.")
             elif action == "offer_resend":
                 offer_id = request.POST.get("offer_id", "").strip()
                 if not offer_id:
@@ -4201,6 +4320,12 @@ def conversation_detail(request, conversation_id):
                     "amount": request.POST.get("amount", "").strip(),
                     "description": request.POST.get("description", "").strip(),
                 }
+                amount_error = min_price_error(payload["amount"], allow_zero=False)
+                if amount_error:
+                    messages.error(request, amount_error)
+                    return redirect(
+                        "conversation-detail", conversation_id=conversation_id
+                    )
                 client.post(
                     f"/booking/{booking_id}/additional-orders/",
                     payload,
@@ -4224,6 +4349,12 @@ def conversation_detail(request, conversation_id):
                 if response_action == "counter":
                     payload["amount"] = request.POST.get("amount", "").strip()
                     payload["description"] = request.POST.get("description", "").strip()
+                    amount_error = min_price_error(payload["amount"], allow_zero=False)
+                    if amount_error:
+                        messages.error(request, amount_error)
+                        return redirect(
+                            "conversation-detail", conversation_id=conversation_id
+                        )
                 client.post(
                     f"/booking/{booking_id}/additional-orders/{order_id}/offers/{offer_id}/respond/",
                     payload,
@@ -4694,6 +4825,25 @@ def conversation_detail(request, conversation_id):
         # front of the customer, either as-is or edited first.
         resend_offer_id = ""
         viewer_is_artisan = conversation.get("viewer_role") == "artisan"
+        # The customer said no. The room keeps the declined quote in its
+        # history and re-opens the composer, but nothing told the artisan a
+        # fresh offer is expected. Say it once, next to the tab that does it.
+        latest_offer_status = ""
+        latest_offer_by_viewer = False
+        if offer_history:
+            latest = offer_history[0]
+            if isinstance(latest, dict):
+                latest_offer_status = str(latest.get("status") or "").upper()
+                latest_offer_by_viewer = str(
+                    latest.get("creator_id") or ""
+                ) == str(conversation.get("viewer_id") or "")
+        reoffer_hint = bool(
+            viewer_is_artisan
+            and "SEND_OFFER" in (conversation.get("available_actions") or [])
+            and not conversation.get("active_offer")
+            and latest_offer_status == "DECLINED"
+            and latest_offer_by_viewer
+        )
         booking_status = str((conversation.get("booking") or {}).get("status") or "")
         if viewer_is_artisan and booking_status in {"CANCELLED", "REJECTED"}:
             accepted = [
@@ -4779,6 +4929,7 @@ def conversation_detail(request, conversation_id):
             offer_field_errors=offer_field_errors,
             offer_draft=offer_draft,
             offer_form=offer_form,
+            reoffer_hint=reoffer_hint,
             offer_action_key=new_idempotency_key("conversation-offer"),
             message_key=new_idempotency_key("conversation-message"),
             resend_offer_id=resend_offer_id,
@@ -5094,6 +5245,10 @@ def service_requests(request):
             _withdraw_service_request(request, client, request_id)
         return redirect("service-requests")
     if request.method == "POST":
+        posted_key = str(request.POST.get("idempotency_key", "") or "").strip()
+        if posted_key:
+            request.session[SERVICE_REQUEST_CREATE_KEY_SESSION] = posted_key[:255]
+            request.session.modified = True
         request.session[PENDING_REQUEST_FORM_SESSION_KEY] = (
             _safe_service_request_form_values(request.POST)
         )
@@ -5127,9 +5282,11 @@ def service_requests(request):
                     _, item, _ = client.post(
                         "/services/requests/",
                         payload,
-                        idempotency_key=new_idempotency_key("service-request-create"),
+                        idempotency_key=_service_request_create_key(request),
                     )
                     _clear_pending_action(request, clear_form_values=True)
+                    request.session.pop(SERVICE_REQUEST_CREATE_KEY_SESSION, None)
+                    request.session.modified = True
                     messages.success(request, "Your service request was created.")
                     return redirect("service-request-detail", pk=item["id"])
                 except APIError as exc:
@@ -5167,6 +5324,7 @@ def service_requests(request):
         request,
         "customer/requests.html",
         requests=items,
+        service_request_key=_service_request_create_key(request),
         form=form,
         catalog_ready=(len(form.fields["service_name"].choices) > 1),
         catalog_unreachable=not catalog.get("ok", True),
@@ -8777,7 +8935,7 @@ def notification_acknowledge(request, pk):
     try:
         APIClient(request).post(f"/notifications/{int(pk)}/read/", {})
     except APIError as exc:
-        return JsonResponse({"detail": str(exc)}, status=exc.status_code)
+        return JsonResponse(error_json_payload(exc), status=exc.status_code)
     except (TypeError, ValueError):
         return JsonResponse({"detail": "Invalid notification."}, status=400)
     return JsonResponse({"status": "read"})
@@ -9044,7 +9202,7 @@ def reveal_manager_values(request):
     gate_target = _staff_security_gate_target(request)
     if gate_target:
         return redirect(gate_target)
-    is_manager = bool(capabilities.get("is_superuser"))
+    is_manager = bool(staff_access_flags(request).get("can_view_manager_overview"))
     can_review_promotions = bool(capabilities.get("can_review_promotions"))
     if scope == "manager" and not is_manager:
         return HttpResponseForbidden("This values request is not authorized.")

@@ -25,7 +25,7 @@
       <p class="workflow-panel-intro">Choose a service and a location worldwide. Available artisans serving that area can respond.</p>
       {% if catalog_unreachable %}<div class="workflow-empty-catalog-note" role="status">The marketplace could not be reached just now, so the service list is unavailable. This is a connection problem, not a setup problem: reload the page in a moment.</div>{% elif not catalog_ready %}<div class="workflow-empty-catalog-note" role="status">The service catalogue is currently empty. Requests can be submitted once services are configured.</div>{% endif %}
       <form method="post" class="workflow-form js-submit-form" data-artisan-form data-tour-target="transactions">
-        {% csrf_token %}
+        {% csrf_token %}<input type="hidden" name="idempotency_key" value="{{ service_request_key }}">
         {% include 'partials/request_form_fields.html' %}
         <button class="button button-primary workflow-submit" type="submit" data-artisan-action>Send request <span aria-hidden="true">→</span></button>
       </form>

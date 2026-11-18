@@ -21,7 +21,7 @@
       <p>One workspace for the case queue, public customer conversations, and controlled refund processing.</p>
     </div>
     <nav class="support-quick-links" aria-label="Support workspace shortcuts">
-      {% if support_capabilities.is_superuser %}<a class="button button-secondary" href="{% url 'dashboard' %}">Manager overview</a>{% endif %}
+      {% if staff_nav.can_view_manager_overview %}<a class="button button-secondary" href="{% url 'dashboard' %}">Manager overview</a>{% endif %}
       <a class="button button-primary" href="{% url 'support-cases' %}"><span>Open case queue</span><span aria-hidden="true">→</span></a>
       {% if support_capabilities.can_review_promotions %}<a class="button button-secondary" href="{% url 'support-promotion-applications' %}">Promotion review{% if promotion_application_count %} · {{ promotion_application_count }} pending{% endif %}</a>{% endif %}
       {% if support_capabilities.can_review_promotions or support_capabilities.is_superuser %}<a class="button button-secondary" href="{% url 'support-promotion-campaign-management' %}">Promotion campaigns &amp; settings</a>{% endif %}

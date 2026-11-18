@@ -158,11 +158,13 @@
       <footer class="customer-notification-dialog-foot"><a href="{% url 'notifications-page' %}">View all notifications <span aria-hidden="true">→</span></a><button type="button" data-notification-dialog-close>Done</button></footer>
     </dialog>
 
-  {% else %}
+  {% elif staff_nav.is_support_staff or staff_nav.is_superuser %}
     <div class="workspace-dashboard-grid staff-dashboard-grid">
       <article class="panel workspace-card" data-artisan-reveal data-motion="left"><header class="workspace-card-heading"><div><span class="artisan-panel-kicker">Operations</span><h2>Support operations</h2></div><a class="workspace-view-link" href="{% url 'support-cases' %}">Open cases <span aria-hidden="true">↗</span></a></header>{% for item in cases %}<a class="list-row" href="{% url 'support-case-detail' pk=item.id %}"><div><strong>{{ item.subject }}</strong><small>{{ item.priority }} · {{ item.status }}</small></div><span>{{ item.reference }}</span></a>{% empty %}<div class="empty">No accessible support cases.</div>{% endfor %}</article>
-      <article class="panel workspace-card" data-artisan-reveal data-motion="right"><header class="workspace-card-heading"><div><span class="artisan-panel-kicker">Administration</span><h2>Workspace links</h2></div></header><nav class="workspace-admin-links" aria-label="Support workspace links"><a href="{% url 'support-cases' %}">Case queue <span>↗</span></a><a href="{% url 'support-refunds' %}">Refunds <span>↗</span></a>{% if support_capabilities.can_manage_staff %}<a href="{% url 'support-staff' %}">Support team <span>↗</span></a>{% endif %}<a href="{% url 'staff-password-change' %}">Change password <span>↗</span></a><a href="{% url 'staff-security-questions' %}">Security questions <span>↗</span></a></nav></article>
+      <article class="panel workspace-card" data-artisan-reveal data-motion="right"><header class="workspace-card-heading"><div><span class="artisan-panel-kicker">Administration</span><h2>Workspace links</h2></div></header><nav class="workspace-admin-links" aria-label="Support workspace links"><a href="{% url 'support-cases' %}">Case queue <span>↗</span></a>{% if staff_nav.can_view_refunds %}<a href="{% url 'support-refunds' %}">Refunds <span>↗</span></a>{% endif %}{% if staff_nav.can_manage_staff %}<a href="{% url 'support-staff' %}">Support team <span>↗</span></a>{% endif %}<a href="{% url 'staff-password-change' %}">Change password <span>↗</span></a><a href="{% url 'staff-security-questions' %}">Security questions <span>↗</span></a></nav></article>
     </div>
+  {% else %}
+    <section class="workspace-empty workspace-empty-compact" role="status"><div><strong>No staff workspace assigned</strong><p>This account is signed in, but the marketplace has not assigned it a staff or customer workspace. A support administrator can assign the appropriate role.</p></div></section>
   {% endif %}
 </section>
 {% endblock %}

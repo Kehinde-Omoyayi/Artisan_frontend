@@ -82,6 +82,7 @@
       finally{
         channel.inFlight=false;
       }
+      if(channel.stopped)return; /* the page is on its way out; nothing is applied and nothing is rescheduled */
       channel.backoff=(channel.backoff||0)+1;
       if(channel.budget&&channel.backoff>=channel.budget){channel.stopped=true;return;}
       schedule(channel);
@@ -158,17 +159,36 @@
     node.textContent=date.toLocaleString(undefined,{weekday:"short",day:"numeric",month:"short",year:"numeric",hour:"numeric",minute:"2-digit"});
   });
 
+  /* A missing file is answered once: the node swaps to a plain unavailable
+     notice and nothing ever requests it again from this page. The server may
+     still be scanning the upload or have purged it under the media policy --
+     either way the room says so instead of hammering a 404. */
+  function unavailableAttachment(label){
+    const notice=document.createElement("span");
+    notice.className="chat-attachment-unavailable";
+    notice.textContent=`${label} unavailable — it may still be waiting to be checked, or it was removed under the media policy.`;
+    return notice;
+  }
+  function watchMedia(node, label, host){
+    node.addEventListener("error", () => {
+      const replacement=unavailableAttachment(label);
+      (host||node).replaceWith(replacement);
+    }, {once:true});
+    return node;
+  }
   function makeAttachment(attachment){
     const url=safeUrl(attachment.url);
     if(!url){
-      if(String(attachment.content_type||'').match(/^(audio|video)\//)){
-        const notice=document.createElement('span');notice.textContent='Recording unavailable (scan pending or access closed under the media policy).';return notice;
-      }
+      const type=String(attachment.content_type||'');
+      if(type.match(/^image\//))return unavailableAttachment('Photo');
+      if(type.match(/^(audio|video)\//))return unavailableAttachment('Recording');
+      if(type.match(/^application\/pdf/))return unavailableAttachment('Document');
       return null;
     }
     if(String(attachment.content_type||'').match(/^(audio|video)\//)){
       const player=document.createElement(attachment.content_type.startsWith('audio/')?'audio':'video');
-      player.controls=true;player.preload='none';player.src=url;player.playsInline=true;return player;
+      player.controls=true;player.preload='none';player.src=url;player.playsInline=true;
+      return watchMedia(player, attachment.content_type.startsWith('audio/')?'Audio':'Video', null);
     }
     const contentType=String(attachment.content_type||"file");
     if(contentType.toLowerCase().startsWith("image/")){
@@ -181,6 +201,7 @@
       image.src=url;
       image.alt="Shared photo; open full size";
       image.loading="lazy";
+      watchMedia(image, 'Photo', link);
       link.appendChild(image);
       return link;
     }
@@ -245,13 +266,38 @@
     setStatus("Message deleted.");
   }
 
+  /* Where the reader is, so a background rebuild never moves them: capture the
+     first visible article before the stream is rebuilt and re-apply the same
+     offset afterwards. */
+  function firstVisibleAnchor(){
+    const articles=Array.from(stream.querySelectorAll(":scope > article[data-message-id]"));
+    if(!articles.length)return null;
+    const areaRect=scrollArea.getBoundingClientRect();
+    for(const article of articles){
+      const rect=article.getBoundingClientRect();
+      if(rect.bottom>areaRect.top+1){
+        return {id:article.getAttribute("data-message-id"),delta:rect.top-areaRect.top};
+      }
+    }
+    return null;
+  }
+  function restoreAnchor(anchor){
+    if(!anchor)return;
+    const renewed=stream.querySelector(`article[data-message-id="${CSS.escape(anchor.id)}"]`);
+    if(!renewed)return;
+    const areaRect=scrollArea.getBoundingClientRect();
+    const rect=renewed.getBoundingClientRect();
+    scrollArea.scrollTop+=rect.top-areaRect.top-anchor.delta;
+  }
   function render(messages){
     const keepBottom=scrollArea.scrollHeight-scrollArea.scrollTop-scrollArea.clientHeight<120;
+    const anchor=keepBottom?null:firstVisibleAnchor();
     const fragment=document.createDocumentFragment();
     messages.forEach(message=>{
       const article=document.createElement("article");
       const isMine=Number(message.sender_id)===viewerId;
       article.className="chat-message "+(message.message_type==="SYSTEM"?"system":isMine?"mine":"theirs");
+      if(message.id)article.setAttribute("data-message-id",String(message.id));
       if(!isMine&&message.message_type!=="SYSTEM"){
         const avatar=document.createElement("span");
         avatar.className="chat-message-avatar";
@@ -327,9 +373,11 @@
     }
     stream.replaceChildren(fragment);
     reinsertTimelineCards(timelineCards);
+    if(!firstPayload&&!keepBottom)restoreAnchor(anchor);
     if(firstPayload||keepBottom)pinToLatest(true);
     firstPayload=false;
     syncJumpButton();
+    jumpRefresh();
   }
 
   /* Opening a conversation has to land on the newest message. A single
@@ -374,7 +422,8 @@
   scrollArea.parentElement&&scrollArea.parentElement.appendChild(jump);
   function syncJumpButton(){
     const distance=scrollArea.scrollHeight-scrollArea.scrollTop-scrollArea.clientHeight;
-    jump.hidden=distance<240;
+    if(distance<240)unreadBelow=0;
+    jumpRefresh();
   }
   scrollArea.addEventListener("scroll",()=>syncJumpButton(),{passive:true});
 
@@ -418,8 +467,7 @@
       const node=document.importNode(fresh,true);
       if(current){current.replaceWith(node);}
       else{
-        stream.querySelector(".chat-empty-state")?.remove();
-        stream.appendChild(node);
+        timelineInsert([node]);
       }
       node.classList.add("is-refreshed");
       window.setTimeout(()=>node.classList.remove("is-refreshed"),4000);
@@ -438,28 +486,44 @@
     }catch(_){setStatus(formatApiError(null,null,{networkError:true}));}
   }
 
-  /* Slot timeline cards back between the rebuilt messages. ISO timestamps
-     compare as strings within one offset; normalise Z to +00:00 for safety. */
+  /* Slot timeline cards (and the rebuilt messages) into strict chronological
+     order. ISO timestamps compare as strings within one offset; normalise Z to
+     +00:00 for safety. Untimed entries sink to the end, exactly like the
+     server-side timeline. Ties break on the same fixed kind order the server
+     uses, and the sort is stable, so same-instant entries keep their
+     deterministic relative order. Nothing here depends on the order the
+     requests completed in. */
+  const normTimelineKey=value=>{const v=String(value||"").replace(/Z$/,"+00:00");return v?v:"\uffff";};
+  const TIMELINE_KIND_ORDER={booking:0,dispute_case:1,offer:2,payment:3,addon:4,journey:5};
+  const timelineKeyOf=node=>normTimelineKey(
+    node.hasAttribute("data-timeline-card")
+      ? node.getAttribute("data-sort-key")
+      : node.getAttribute("data-message-created-at")
+  );
+  const timelineRankOf=node=>{
+    if(!node.hasAttribute("data-timeline-card"))return 6;
+    const kind=String(node.getAttribute("data-timeline-kind")||"");
+    return Object.prototype.hasOwnProperty.call(TIMELINE_KIND_ORDER,kind)?TIMELINE_KIND_ORDER[kind]:5;
+  };
+  function timelineInsert(cards){
+    (cards||[]).forEach(card=>stream.appendChild(card));
+    const empty=stream.querySelector(":scope > .chat-empty-state");
+    if(empty)empty.remove();
+    const nodes=Array.from(stream.querySelectorAll(":scope > article[data-message-created-at], :scope > [data-timeline-card]"));
+    nodes.sort((a,b)=>{
+      const ka=timelineKeyOf(a),kb=timelineKeyOf(b);
+      if(ka!==kb)return ka<kb?-1:1;
+      return timelineRankOf(a)-timelineRankOf(b);
+    });
+    nodes.forEach(node=>stream.appendChild(node));
+    if(empty)stream.appendChild(empty);
+  }
   function reinsertTimelineCards(cards){
-    if(!cards.length)return;
-    const articles=Array.from(stream.querySelectorAll(":scope > article[data-message-created-at]"));
-    const norm=value=>{const v=String(value||"").replace(/Z$/,"+00:00");return v?v:"\uffff";}; /* untimed cards sink to the end, like the server */
-    const ordered=cards.slice().sort((a,b)=>norm(a.getAttribute("data-sort-key")).localeCompare(norm(b.getAttribute("data-sort-key"))));
-    for(const card of ordered){
-      const sortKey=norm(card.getAttribute("data-sort-key"));
-      let anchor=null;
-      if(sortKey){
-        for(const article of articles){
-          if(norm(article.getAttribute("data-message-created-at"))<=sortKey)anchor=article;else break;
-        }
-      }
-      if(anchor)anchor.after(card);
-      else if(articles.length)stream.insertBefore(card,articles[0]);
-      else{
-        const empty=stream.querySelector(".chat-empty-state");
-        if(empty)stream.insertBefore(card,empty);else stream.appendChild(card);
-      }
-    }
+    // The card nodes were captured before the rebuild; appending them back
+    // inside timelineInsert (then re-sorting the stream) reconciles API
+    // payload order, WebSocket-adjacent delivery order and refresh order into
+    // one deterministic chronological sequence.
+    timelineInsert(cards);
   }
 
   /* The body of refresh(), split out so the shared poller can hand over the
@@ -475,13 +539,22 @@
         .join("|");
       const offersChanged=lastOfferSignature!==null&&offerSignature!==lastOfferSignature;
       lastOfferSignature=offerSignature;
+      // Stable identity for de-duplication across every delivery path (API
+      // poll, a pushed envelope, a refresh): the server-assigned event_key is
+      // preferred; the message id is the fallback for plain user chat.
+      const stableKey=message=>message&&message.event_key?`ek:${message.event_key}`:message&&message.id?`id:${message.id}`:null;
       // "Conversation started" is guidance and "Offer created/countered" is the
       // card itself. Both stay in the database for audit but never reappear as
       // a bare text bubble in the stream.
       messages=messages.filter(message=>message.event_code!=="CONVERSATION_STARTED"&&message.event_code!=="OFFER_CREATED"&&message.event_code!=="OFFER_COUNTERED");
       const wasFirstPayload=firstPayload;
-      const newIncoming=!wasFirstPayload&&messages.some(message=>message.id&&!seenMessageIds.has(String(message.id))&&Number(message.sender_id)!==viewerId&&message.message_type!=="SYSTEM");
-      messages.forEach(message=>{if(message.id)seenMessageIds.add(String(message.id));});
+      const unseenKey=message=>{const key=stableKey(message);return key&&!seenMessageIds.has(key);};
+      const isCounterparty=message=>Number(message.sender_id)!==viewerId&&message.message_type!=="SYSTEM";
+      const freshCount=!wasFirstPayload?messages.filter(message=>unseenKey(message)&&isCounterparty(message)).length:0;
+      if(freshCount){
+        if(scrollArea.scrollHeight-scrollArea.scrollTop-scrollArea.clientHeight>=240)unreadBelow+=freshCount;
+      }
+      messages.forEach(message=>{const key=stableKey(message);if(key)seenMessageIds.add(key);});
       const signature=JSON.stringify(messages.map(message=>[message.id,message.body,(message.attachments||[]).map(attachment=>[attachment.id,attachment.url,attachment.scan_status])]));
       if(signature!==lastSignature){render(messages);lastSignature=signature;}
       lastRenderedId=messages.length?String(messages[messages.length-1].id):null;
@@ -763,6 +836,21 @@
   const QUIET_POLLS_BEFORE_SLEEP=6;
   let quietPolls=0,asleep=true,lastSeenTopId="";
   const MESSAGE_POLL_DELAY=6000;
+  /* The reader was away from the bottom when fresh content landed (a new
+     message, or a poll that found the room changed): flag the jump pill so
+     the new content is obvious without dragging them to it. */
+  let unreadBelow=0;
+  const jumpRefresh=()=>{
+    const distance=scrollArea.scrollHeight-scrollArea.scrollTop-scrollArea.clientHeight;
+    jump.hidden=distance<240;
+    if(unreadBelow>0&&distance>=240){
+      jump.innerHTML='<span aria-hidden="true">\u2193</span> '+unreadBelow+' new '+(unreadBelow===1?'message':'messages');
+      jump.classList.add("chat-jump-latest--new");
+    }else{
+      jump.innerHTML='<span aria-hidden="true">\u2193</span> Latest messages';
+      jump.classList.remove("chat-jump-latest--new");
+    }
+  };
   const messagePoller=Poller.watch(
     `/discover/conversations/${id}/messages/?limit=60`,
     /* The poller fetched this payload itself, so it is applied directly: the
@@ -805,7 +893,10 @@
     },{passive:true});
   });
   scrollArea.addEventListener("scroll",()=>{if(!document.hidden)wakeStream();},{passive:true});
-  window.addEventListener("beforeunload",()=>messagePoller.stop(),{once:true});
+  const stopStream=()=>messagePoller.stop();
+  window.addEventListener("beforeunload",stopStream,{once:true});
+  window.addEventListener("pagehide",stopStream,{once:true});
+  window.addEventListener("pageshow",(event)=>{if(event.persisted)wakeStream();});
   fileInput&&showAttachmentPreview();
   syncComposerButtons();
   /* One fetch on load (refresh), then the poller takes over on its own beat --
@@ -848,6 +939,47 @@
   });
   const tools=document.getElementById("chat-service-tools");
   document.addEventListener("keydown",event=>{if(event.key==="Escape"&&tools?.open)tools.open=false;});
+
+  /* Chat ⇄ Itemized offer. Switching tabs never touches the form, so a
+     half-written quote and a half-typed message are both exactly where they
+     were left; offer-draft.js also mirrors every keystroke to localStorage,
+     so even a reload cannot lose the quote. */
+  const modeToggle=document.querySelector("[data-chat-mode-toggle]");
+  if(modeToggle){
+    const tabs=Array.from(modeToggle.querySelectorAll("[data-chat-mode]"));
+    const panes=Array.from(document.querySelectorAll("[data-chat-pane]"));
+    const storeKey="artisan.chat-mode:"+(stream.dataset.conversationId||"");
+    const setMode=(mode,focus)=>{
+      tabs.forEach(tab=>{
+        const active=tab.getAttribute("data-chat-mode")===mode;
+        tab.classList.toggle("is-active",active);
+        tab.setAttribute("aria-selected",active?"true":"false");
+        if(active&&focus)tab.focus();
+      });
+      panes.forEach(pane=>{
+        pane.classList.toggle("is-hidden",pane.getAttribute("data-chat-pane")!==mode);
+      });
+      try{window.sessionStorage.setItem(storeKey,mode);}catch(_){/* private mode: tab still works */}
+    };
+    tabs.forEach(tab=>{
+      tab.addEventListener("click",()=>setMode(tab.getAttribute("data-chat-mode"),false));
+      tab.addEventListener("keydown",event=>{
+        if(event.key!=="ArrowLeft"&&event.key!=="ArrowRight")return;
+        event.preventDefault();
+        const index=tabs.indexOf(tab);
+        const next=tabs[(index+(event.key==="ArrowRight"?1:tabs.length-1))%tabs.length];
+        setMode(next.getAttribute("data-chat-mode"),true);
+      });
+    });
+    // A failed offer send re-renders with the offer tab active (the server
+    // decides); otherwise reopen on the tab this visitor last used.
+    const offerPaneActive=!document.querySelector('[data-chat-pane="offer"].is-hidden');
+    if(!offerPaneActive){
+      let stored=null;
+      try{stored=window.sessionStorage.getItem(storeKey);}catch(_){stored=null;}
+      if(stored==="offer"&&modeToggle.querySelector('[data-chat-mode="offer"]'))setMode("offer",false);
+    }
+  }
 })();
 
 /* Escrow payment lives in the chat: while the provider link is being prepared,

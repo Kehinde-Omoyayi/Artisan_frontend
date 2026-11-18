@@ -230,7 +230,7 @@
     </section>
   </div>
 
-  <footer class="manager-dashboard-footnote"><span class="manager-footnote-icon" aria-hidden="true">i</span><p>Restricted to platform superusers. Dashboard figures are whole-site aggregates; payment-provider payloads, secrets, and participant contact details are never returned by the manager analytics endpoint.</p><span class="manager-footnote-stamp">Snapshot · {{ manager_analytics.generated_at|date:'j M Y' }}</span></footer>
+  <footer class="manager-dashboard-footnote"><span class="manager-footnote-icon" aria-hidden="true">i</span><p>Restricted to authorized managers. Dashboard figures are whole-site aggregates; payment-provider payloads, secrets, and participant contact details are never returned by the manager analytics endpoint.</p><span class="manager-footnote-stamp">Snapshot · {{ manager_analytics.generated_at|date:'j M Y' }}</span></footer>
   {% endwith %}
   {% endif %}
 </section>

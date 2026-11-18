@@ -86,6 +86,7 @@ _TEMPLATE_OPTIONS = {
         "django.contrib.messages.context_processors.messages",
         "frontend.context_processors.notifications",
         "frontend.context_processors.unread_messages",
+        "frontend.context_processors.staff_nav",
     ],
 }
 if _TEMPLATE_CACHE:

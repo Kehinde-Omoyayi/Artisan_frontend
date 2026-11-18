@@ -230,3 +230,4 @@
   .artisan-service-pickers { padding: 2px 10px; }
   .artisan-pick-value { max-width: 110px; }
 }
+.artisan-pick-option[hidden] { display: none; }

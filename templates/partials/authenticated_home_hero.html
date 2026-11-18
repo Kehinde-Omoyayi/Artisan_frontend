@@ -4,7 +4,7 @@
     <div class="authenticated-home-hero__copy">
       {% if platform_manager %}
         <p class="landing-eyebrow">Artisan Market · Platform control room</p>
-        <span class="manager-access-pill auth-home-access-pill"><span aria-hidden="true">◆</span> Superuser only</span>
+        <span class="manager-access-pill auth-home-access-pill"><span aria-hidden="true">◆</span> Authorized manager</span>
         <h1>Manager overview</h1>
         <p>A whole-site view of marketplace activity, trust operations, and aggregate financial performance.</p>
         <div class="authenticated-home-hero__meta">
@@ -13,7 +13,7 @@
           <span class="auth-home-snapshot"><small>Data snapshot</small><strong>{% if manager_analytics.generated_at %}{{ manager_analytics.generated_at|date:'j M Y, g:i a' }}{% else %}Waiting for analytics{% endif %}</strong></span>
         </div>
         <div class="authenticated-home-hero__actions">
-          <a class="landing-button landing-button--primary" href="{% url 'support-operations' %}">Open support desk <span aria-hidden="true">↗</span></a>
+          {% if staff_nav.is_support_staff or staff_nav.is_superuser %}<a class="landing-button landing-button--primary" href="{% url 'support-operations' %}">Open support desk <span aria-hidden="true">↗</span></a>{% endif %}
           <a class="landing-button landing-button--quiet" href="{% url 'support-cases' %}">Review cases <span aria-hidden="true">↗</span></a>
         </div>
       {% elif role == 'staff' %}
@@ -21,7 +21,7 @@
         <h1>Support operations</h1>
         <p>One workspace for the case queue, customer conversations, and controlled refund processing.</p>
         <div class="authenticated-home-hero__actions">
-          {% if support_capabilities.is_superuser %}<a class="landing-button landing-button--quiet" href="{% url 'dashboard' %}">Manager overview <span aria-hidden="true">↗</span></a>{% endif %}
+          {% if staff_nav.can_view_manager_overview %}<a class="landing-button landing-button--quiet" href="{% url 'dashboard' %}">Manager overview <span aria-hidden="true">↗</span></a>{% endif %}
           <a class="landing-button landing-button--primary" href="{% url 'support-cases' %}">Open case queue <span aria-hidden="true">↗</span></a>
           {% if support_capabilities.can_view_refunds %}<a class="landing-button landing-button--quiet" href="{% url 'support-refunds' %}">Refund operations <span aria-hidden="true">↗</span></a>{% endif %}
           {% if support_capabilities.can_manage_staff %}<a class="landing-button landing-button--quiet" href="{% url 'support-staff' %}">Support team <span aria-hidden="true">↗</span></a>{% endif %}

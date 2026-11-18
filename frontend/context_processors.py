@@ -2,7 +2,8 @@
 import logging
 import time
 
-from .api import APIClient
+from .api import APIClient, APIError
+from .staff_nav import staff_access_flags
 
 logger = logging.getLogger(__name__)
 UNREAD_REFRESH_SECONDS = 30
@@ -13,7 +14,32 @@ SKIPPED_PREFIXES = ("/api/", "/static/", "/media/", "/health/", "/admin/", "/con
 
 def _skips_badges(request, session):
     """True when this visitor never shows shopper badges."""
-    return bool(session.get("is_manager")) or request.path.startswith(SKIPPED_PREFIXES)
+    return request.path.startswith(SKIPPED_PREFIXES)
+
+
+def _badge_count(request, session, *, session_key, checked_key, path, log_event):
+    now = time.time()
+    if now - float(session.get(checked_key, 0)) <= UNREAD_REFRESH_SECONDS:
+        return session.get(session_key, 0)
+    try:
+        _, payload, _ = APIClient(request).get(path)
+        session[session_key] = int(payload.get("unread_count", 0)) if isinstance(payload, dict) else 0
+    except APIError as exc:
+        if exc.status_code in (401, 403):
+            # Expected denial (e.g. a role without the badge scope). Not an
+            # error worth a traceback; the navbar simply shows no badge.
+            logger.info("%s status=%s path=%s", log_event, exc.status_code, path)
+            session.setdefault(session_key, 0)
+        else:
+            logger.warning(
+                "%s status=%s path=%s", log_event, exc.status_code, path, exc_info=True
+            )
+            session.setdefault(session_key, 0)
+    except Exception:  # the navbar badge must never break a page
+        logger.warning("%s path=%s", log_event, path, exc_info=True)
+        session.setdefault(session_key, 0)
+    session[checked_key] = now
+    return session.get(session_key, 0)
 
 
 def notifications(request):
@@ -21,16 +47,15 @@ def notifications(request):
     session = getattr(request, "session", None)
     if session is None or not session.get("api_access") or _skips_badges(request, session):
         return {}
-    now = time.time()
-    if now - float(session.get("notif_unread_checked_at", 0)) > UNREAD_REFRESH_SECONDS:
-        try:
-            _, payload, _ = APIClient(request).get("/notifications/unread-count/")
-            session["notif_unread"] = int(payload.get("unread_count", 0)) if isinstance(payload, dict) else 0
-        except Exception:  # the navbar badge must never break a page
-            logger.warning("notification_badge_refresh_failed", exc_info=True)
-            session.setdefault("notif_unread", 0)
-        session["notif_unread_checked_at"] = now
-    return {"unread_notification_count": session.get("notif_unread", 0)}
+    count = _badge_count(
+        request,
+        session,
+        session_key="notif_unread",
+        checked_key="notif_unread_checked_at",
+        path="/notifications/unread-count/",
+        log_event="notification_badge_refresh_failed",
+    )
+    return {"unread_notification_count": count}
 
 
 def unread_messages(request):
@@ -43,13 +68,21 @@ def unread_messages(request):
     session = getattr(request, "session", None)
     if session is None or not session.get("api_access") or _skips_badges(request, session):
         return {}
-    now = time.time()
-    if now - float(session.get("msg_unread_checked_at", 0)) > UNREAD_REFRESH_SECONDS:
-        try:
-            _, payload, _ = APIClient(request).get("/conversations/unread-count/")
-            session["msg_unread"] = int(payload.get("unread_count", 0)) if isinstance(payload, dict) else 0
-        except Exception:  # a badge must never break a page
-            logger.warning("message_badge_refresh_failed", exc_info=True)
-            session.setdefault("msg_unread", 0)
-        session["msg_unread_checked_at"] = now
-    return {"unread_message_count": session.get("msg_unread", 0)}
+    count = _badge_count(
+        request,
+        session,
+        session_key="msg_unread",
+        checked_key="msg_unread_checked_at",
+        path="/conversations/unread-count/",
+        log_event="message_badge_refresh_failed",
+    )
+    return {"unread_message_count": count}
+
+
+def staff_nav(request):
+    """Expose permission flags used by the staff navigation (deny-by-default)."""
+    # The manager console renders its own permission-filtered navigation
+    # (console_nav); skip the duplicate lookups there.
+    if getattr(request, "path", "").startswith("/console/"):
+        return {}
+    return {"staff_nav": staff_access_flags(request)}

@@ -210,6 +210,9 @@
 /* Keep the existing operational metrics intact while placing them in the landing-page frame. */
 .authenticated-home-page .marketplace-dashboard-page > .workspace-metric-grid,
 .authenticated-home-page .marketplace-dashboard-page > .workspace-dashboard-grid,
+.authenticated-home-page .marketplace-dashboard-page > .dashboard-profile-health,
+.authenticated-home-page .marketplace-dashboard-page > .artisan-profile-activity-section,
+.authenticated-home-page .marketplace-dashboard-page > .workspace-empty,
 .authenticated-home-page .customer-profile-layout {
   width: min(1240px, calc(100% - 64px));
   margin-right: auto;

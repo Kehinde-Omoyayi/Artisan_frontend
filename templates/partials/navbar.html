@@ -70,15 +70,15 @@
           <a href="{% url 'support-cases' %}" data-tour-target="support">Support</a>
 
         {% elif nav_role == 'staff' %}
-          {% if platform_manager %}
+          {% if staff_nav.can_view_manager_overview %}
             <a href="{% url 'home' %}">Manager Overview</a>
-            <a href="{% url 'support-operations' %}" data-tour-target="support">Support Operations</a>
-          {% else %}
-            <a href="{% url 'support-operations' %}">Support Operations</a>
           {% endif %}
-          <a href="{% url 'support-cases' %}" data-tour-target="support">Case Queue</a>
-          <a href="{% url 'support-refunds' %}" data-tour-target="support">Refunds</a>
-          <a href="{% url 'support-staff' %}">Support Team</a>
+          {% if staff_nav.is_support_staff or staff_nav.is_superuser %}
+            <a href="{% url 'support-operations' %}" data-tour-target="support">Support Operations</a>
+            <a href="{% url 'support-cases' %}" data-tour-target="support">Case Queue</a>
+          {% endif %}
+          {% if staff_nav.can_view_refunds %}<a href="{% url 'support-refunds' %}" data-tour-target="support">Refunds</a>{% endif %}
+          {% if staff_nav.can_manage_staff %}<a href="{% url 'support-staff' %}">Support Team</a>{% endif %}
         {% else %}
           <a href="{% url 'home' %}">Dashboard</a>
           <a href="{% url 'artisans' %}" data-tour-target="discovery">Find artisans</a>
@@ -175,15 +175,15 @@
           <a href="{% url 'support-cases' %}" data-tour-target="support">Support</a>
 
         {% elif nav_role == 'staff' %}
-          {% if platform_manager %}
+          {% if staff_nav.can_view_manager_overview %}
             <a href="{% url 'dashboard' %}">Manager Overview</a>
-            <a href="{% url 'support-operations' %}" data-tour-target="support">Support Operations</a>
-          {% else %}
-            <a href="{% url 'support-operations' %}">Support Operations</a>
           {% endif %}
-          <a href="{% url 'support-cases' %}" data-tour-target="support">Case Queue</a>
-          <a href="{% url 'support-refunds' %}" data-tour-target="support">Refunds</a>
-          <a href="{% url 'support-staff' %}">Support Team</a>
+          {% if staff_nav.is_support_staff or staff_nav.is_superuser %}
+            <a href="{% url 'support-operations' %}" data-tour-target="support">Support Operations</a>
+            <a href="{% url 'support-cases' %}" data-tour-target="support">Case Queue</a>
+          {% endif %}
+          {% if staff_nav.can_view_refunds %}<a href="{% url 'support-refunds' %}" data-tour-target="support">Refunds</a>{% endif %}
+          {% if staff_nav.can_manage_staff %}<a href="{% url 'support-staff' %}">Support Team</a>{% endif %}
         {% else %}
           <a href="{% url 'home' %}">Dashboard</a>
           <a href="{% url 'artisans' %}" data-tour-target="discovery">Find artisans</a>

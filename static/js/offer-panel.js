@@ -24,7 +24,7 @@
       '<td data-label="Item"><input class="field-input" type="text" data-material-name maxlength="120" placeholder="Item name" required></td>' +
       '<td data-label="Qty"><input class="field-input" type="number" data-material-qty min="0.01" step="0.01" value="1" required></td>' +
       '<td data-label="Unit"><input class="field-input" type="text" data-material-unit maxlength="40" placeholder="e.g. bags"></td>' +
-      '<td data-label="Unit price (₦)"><input class="field-input" type="number" data-material-price min="0" step="0.01" value="0" required></td>' +
+      '<td data-label="Unit price (₦)"><input class="field-input" type="number" data-material-price data-min-price="required" min="100" step="0.01" value="100" required></td>' +
       '<td data-label="Line total (₦)"><span class="material-line-value">₦<span data-material-line>0.00</span></span></td>' +
       '<td data-label="Remove"><button class="button button-secondary" type="button" data-material-remove aria-label="Remove material item">×</button></td>';
     return tr;
@@ -90,12 +90,30 @@
       text(summary.querySelector ? summary.querySelector('[data-summary-total]') : null, '₦' + fmt(total));
 
       if (submitButton) {
-        var ready = labour > 0 && total > 0;
+        var helper = window.ArtisanMinPrice;
+        var priceOk = true;
+        if (helper) {
+          priceOk =
+            helper.check(labourInput && labourInput.value, { allowZero: false }) &&
+            helper.check(transportInput && transportInput.value, { allowZero: true }) &&
+            helper.check(additionalInput && additionalInput.value, { allowZero: true });
+          rows().forEach(function (tr) {
+            var input = tr.querySelector('[data-material-price]');
+            var nameField = tr.querySelector('[data-material-name]');
+            var hasRow = nameField ? String(nameField.value || '').trim() !== '' : false;
+            if (hasRow && input && !helper.check(input.value, { allowZero: false })) priceOk = false;
+          });
+        }
+        var ready = labour >= 100 && total > 0 && priceOk;
         submitButton.disabled = !ready;
         if (reviewStatus) {
-          reviewStatus.textContent = ready
-            ? 'Review the payable total, materials list, start date and duration, then send.'
-            : 'Labour and a payable total above zero are required before the offer can be sent.';
+          if (!priceOk) {
+            reviewStatus.textContent = helper ? helper.MESSAGE : 'The minimum permitted price for an item or service is ₦100.00.';
+          } else {
+            reviewStatus.textContent = ready
+              ? 'Review the payable total, materials list, start date and duration, then send.'
+              : 'Labour of at least ₦100.00 and a payable total above zero are required before the offer can be sent.';
+          }
         }
       }
     }
@@ -107,7 +125,7 @@
         tr.querySelector('[data-material-name]').value = item.name || '';
         tr.querySelector('[data-material-qty]').value = item.quantity || '1';
         tr.querySelector('[data-material-unit]').value = item.unit || '';
-        tr.querySelector('[data-material-price]').value = item.unit_price || '0';
+        tr.querySelector('[data-material-price]').value = item.unit_price || '100';
       }
       tr.querySelector('[data-material-remove]').addEventListener('click', function () {
         tr.remove();

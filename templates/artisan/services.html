@@ -120,6 +120,7 @@
   font-weight: 700;
 }
 .artisan-pick-option.is-selected::before { content: "✓"; color: var(--brand, #74432f); font-size: 10px; }
+.artisan-pick-option[hidden] { display: none; }
 
 .artisan-pick-empty { margin: 6px 2px 2px; color: #8a7663; font-size: 11.5px; }
 .artisan-pick-empty[hidden] { display: none; }
@@ -356,7 +357,7 @@
         <div class="form-field artisan-service-budget{% if form.starting_price.errors %} has-error{% endif %}">
           <label for="{{ form.starting_price.id_for_label }}">Starting budget</label>
           {{ form.starting_price }}
-          <small class="help">Optional. Leave blank to show “Budget on request”.</small>
+          <small class="help">Optional. Leave blank to show “Budget on request”. Minimum ₦100.00 when given.</small>
           {% if form.starting_price.errors %}<div class="field-error">{{ form.starting_price.errors|striptags }}</div>{% endif %}
         </div>
 
@@ -402,4 +403,4 @@
   </section>
 </section>
 {% endblock %}
-{% block scripts %}{% page_script 'js/pages/artisan-ui.js' %}{% endblock %}
+{% block scripts %}<script src="{% static 'js/min-price.js' %}"></script>{% page_script 'js/pages/artisan-ui.js' %}{% endblock %}

@@ -301,10 +301,20 @@ class APIClient:
             _activate_fallback(exc)
             return response
 
+        # A caller that supplies an Idempotency-Key has told us the operation is
+        # replay-safe: the backend stores the key and returns the original
+        # result instead of applying the operation twice. Those operations get
+        # the same one careful retry the safe methods get -- a dropped
+        # connection must not strand a message or an offer the user typed.
+        keyed_write = (
+            method.upper() not in self._SAFE_METHODS
+            and bool((headers or {}).get("Idempotency-Key"))
+        )
+        retriable_write = keyed_write
         try:
             response = _request(url, _connection_header())
         except requests.ConnectionError as exc:
-            if method.upper() not in self._SAFE_METHODS:
+            if method.upper() not in self._SAFE_METHODS and not retriable_write:
                 raise APIError(503, network_error=True) from exc
             # The reused socket was already dead: drop the pool and try once more
             # on a brand-new connection, then on the local API if that fails too.
@@ -318,7 +328,7 @@ class APIClient:
                     self._mark_unreachable()
                     raise APIError(503, network_error=True) from final_exc
         except requests.RequestException as exc:
-            if method.upper() not in self._SAFE_METHODS:
+            if method.upper() not in self._SAFE_METHODS and not retriable_write:
                 self._mark_unreachable()
                 raise APIError(503, network_error=True) from exc
             try:

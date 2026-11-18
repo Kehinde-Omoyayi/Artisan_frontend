@@ -8,6 +8,7 @@ and shows nothing rather than inventing a number.
 from __future__ import annotations
 
 from urllib.parse import urlencode
+import logging
 
 from django.contrib import messages
 from django.http import HttpResponse
@@ -17,6 +18,8 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from .api import APIError, APIClient, extract_items
 from .views import api_guard, handle_api_error, page
+
+logger = logging.getLogger(__name__)
 
 PERIOD_CHOICES = [
     ("today", "Today"),
@@ -64,7 +67,7 @@ SECTION_TITLES = {
 }
 
 NAV = [
-    ("Overview", "console-overview", "overview"),
+    ("Overview", "console-overview", "analytics.view"),
     ("Financial", "console-financial", "analytics.financial"),
     ("Business", "console-business", "analytics.view"),
     ("Service", "console-services", "analytics.view"),
@@ -278,18 +281,62 @@ def resume_pending_action(request, client, scope):
     return f"{pending.get('success') or 'Done.'}{(' ' + str(detail)) if detail else ''}".strip()
 
 
-def _guard(session, request):
-    """Managers only. A customer or artisan is sent back to their own dashboard."""
+# Section -> permission code. Mirrors NAV below and the backend's
+# ``required_permission`` on each manager API view, so a manager who lacks the
+# permission cannot open the page at all — the data never leaves the API.
+SECTION_PERMISSIONS = {
+    "overview": "analytics.view",
+    "financial": "analytics.financial",
+    "business": "analytics.view",
+    "services": "analytics.view",
+    "customers": "analytics.customer",
+    "artisans": "analytics.artisan",
+    "funnel": "analytics.view",
+    "marketing": "analytics.view",
+    "geography": "analytics.view",
+    "insights": "analytics.view",
+    "data-quality": "analytics.view",
+    "support": "support.view",
+    "risk": "risk.view",
+    "reports": "analytics.build",
+    "campaigns": "campaign.view",
+    "staff": "staff.view",
+    "configuration": "config.view",
+    "privacy": "privacy.view",
+    "system-health": "system.health",
+    "audit": "audit.view",
+    "jobs": "analytics.view",
+}
+
+
+def _guard(session, request, permission=""):
+    """Active managers holding the named permission only.
+
+    A customer or artisan (or an inactive/suspended manager) is sent back to
+    their own dashboard. A manager missing the section permission is told so
+    and sent to the site dashboard — never shown an empty console page whose
+    API calls would only 403. The backend re-checks every request regardless.
+    """
     if session is None or not session.get("is_manager"):
         messages.error(request, "The Manager Console is restricted to active managers with a second factor enrolled.")
         return redirect("dashboard")
+    if permission:
+        granted = set(session.get("permissions") or [])
+        slug = str(((session.get("role") or {}).get("slug")) or "")
+        if permission not in granted and slug != "super-admin":
+            logger.info(
+                "console_section_denied permission=%s role=%s path=%s",
+                permission, slug or "unknown", request.path,
+            )
+            messages.error(request, "Your role does not include access to this console area.")
+            return redirect("dashboard")
     return None
 
 
 def _analytics_view(request, template, section, path, extra_builder=None):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, SECTION_PERMISSIONS.get(section, "analytics.view"))
     if blocked:
         return blocked
     params = _period_params(request)
@@ -365,7 +412,7 @@ def support_intelligence(request):
 def risk(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "risk.view")
     if blocked:
         return blocked
     params = _period_params(request)
@@ -382,7 +429,7 @@ def risk(request):
 def reports(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "analytics.build")
     if blocked:
         return blocked
     catalogue = _fetch(request, client, "/manager/explorer/catalogue/")[0]
@@ -494,7 +541,7 @@ def export_download(request, job_id):
 def campaigns(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "campaign.view")
     if blocked:
         return blocked
     payload = _fetch(request, client, "/manager/campaigns/")[0]
@@ -567,7 +614,7 @@ def campaign_cancel(request, campaign_id):
 def staff(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "staff.view")
     if blocked:
         return blocked
     payload = _fetch(request, client, "/manager/staff/")[0]
@@ -613,7 +660,7 @@ def role_permissions(request, slug):
 def config_centre(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "config.view")
     if blocked:
         return blocked
     payload = _fetch(request, client, "/manager/config/")[0]
@@ -697,7 +744,7 @@ def config_reject(request, change_id):
 def jobs(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "analytics.view")
     if blocked:
         return blocked
     payload = _fetch(request, client, "/manager/jobs/")[0]
@@ -733,7 +780,7 @@ def snapshot_capture(request):
 def system_health(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "system.health")
     if blocked:
         return blocked
     payload = _fetch(request, client, "/manager/health/")[0]
@@ -744,7 +791,7 @@ def system_health(request):
 def audit(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "audit.view")
     if blocked:
         return blocked
     params = {"page": request.GET.get("page") or 1, "size": request.GET.get("size") or 50}
@@ -763,7 +810,7 @@ def audit(request):
 def privacy(request):
     client = APIClient(request)
     session = _session_payload(client)
-    blocked = _guard(session, request)
+    blocked = _guard(session, request, "privacy.view")
     if blocked:
         return blocked
     payload = _fetch(request, client, "/manager/privacy/")[0]

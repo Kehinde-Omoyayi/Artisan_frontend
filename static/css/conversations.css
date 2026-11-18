@@ -825,6 +825,11 @@ body.conversation-shell-body {
   margin: 6px 0 0; padding: 7px 10px; border: 1px dashed #ddd0c1; border-radius: 10px;
   background: #fbf7f2; color: #8a7565; font-size: 9.5px; line-height: 1.45;
 }
+.chat-attachment-unavailable {
+  display: inline-block; margin: 6px 0 0; padding: 7px 10px; border: 1px dashed #ddd0c1;
+  border-radius: 10px; background: #fbf7f2; color: #8a7565; font-size: 9.5px; line-height: 1.45;
+}
+.chat-attachment-media-wrap { display: block; }
 /* These cards sit on light backgrounds inside dark "mine" bubbles, so they need to
    outrank .chat-message.mine .chat-bubble strong/p. */
 .chat-message .chat-bubble .chat-attachment-file { color: #4c3025; }
@@ -2151,6 +2156,49 @@ body.conversation-shell-body .response-stack .response-panel__dismiss { width: 2
    in the message stream at the moment they were created, so the eye never
    has to leave the thread to find them. */
 .chat-stream > .workflow-card,
-.chat-stream > .journey-status { margin: 6px 2px; }
+.chat-stream > .journey-status,
+.chat-stream > .payment-timeline-entry { margin: 6px 2px; }
 .chat-stream > .workflow-card:first-child,
-.chat-stream > .journey-status:first-child { margin-top: 2px; }
+.chat-stream > .journey-status:first-child,
+.chat-stream > .payment-timeline-entry:first-child { margin-top: 2px; }
+.chat-stream > .payment-timeline-entry > .chat-transfer { margin: 0; }
+
+/* Minimum price enforcement: below-₦100 inputs are flagged, never clamped. */
+.chat-workspace [data-min-price][aria-invalid="true"],
+.chat-workspace input.field-invalid[data-min-price] { border-color: #c8463c; box-shadow: 0 0 0 3px rgba(200, 70, 60, .12); }
+.min-price-error { display: block; color: #b42318; font-size: 11px; line-height: 1.45; margin: 6px 2px 2px; }
+.min-price-error::before { content: ""; }
+.chat-jump-latest--new { border-color: #8a5a3b; background: #fdf0e7; color: #5f3a22; }
+.chat-jump-latest--new > span { background: #b42318; }
+
+/* Chat ⇄ Itemized offer: one segmented control, two panes, drafts kept in both. */
+.chat-mode-toggle {
+  display: flex; gap: 4px; margin: 12px 15px 0; padding: 4px;
+  border: 1px solid var(--conversation-line, #e7ddd2); border-radius: 12px;
+  background: #f6efe7; width: fit-content;
+}
+.chat-mode-tab {
+  border: 0; border-radius: 9px; padding: 8px 18px; cursor: pointer;
+  background: transparent; color: #6d5a4c; font: inherit; font-size: 12px; font-weight: 700;
+  letter-spacing: .01em; transition: background .18s ease, color .18s ease, box-shadow .18s ease;
+}
+.chat-mode-tab:hover { background: #ece1d5; }
+.chat-mode-tab.is-active {
+  background: var(--brand, #74432f); color: #fffdf9;
+  box-shadow: 0 2px 6px rgba(76, 48, 37, .28);
+}
+.chat-mode-tab:focus-visible { outline: 3px solid #c17d4d; outline-offset: 2px; }
+.chat-pane.is-hidden { display: none; }
+.chat-offer-panel {
+  margin: 0 0 2px; padding: 14px 16px 16px; border-top: 1px solid var(--conversation-line, #e7ddd2);
+  background: #fffdf9; border-radius: 0 0 14px 14px;
+}
+.chat-offer-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.chat-offer-panel-head strong { color: var(--brand-dark, #4c3025); font-size: 14px; }
+.chat-offer-panel-note { color: #8b8077; font-size: 10px; }
+@media (max-width: 560px) {
+  .chat-mode-toggle { margin: 10px 10px 0; width: calc(100% - 20px); }
+  .chat-mode-tab { flex: 1; padding: 9px 10px; }
+}
+.chat-reoffer-hint { margin: 0 0 8px; padding: 8px 11px; font-size: 12px; line-height: 1.5; color: #6b4a2b; background: #fdf3e7; border: 1px solid #eac9a0; border-radius: 10px; }
+.chat-reoffer-hint strong { font-weight: 700; }

@@ -153,13 +153,23 @@
         input.placeholder = "Search…";
         input.setAttribute("aria-label", "Search options");
         input.autocomplete = "off";
+        /* Empty-state line: a filter that hides every row must say so,
+           otherwise an empty panel reads as broken. */
+        const note = document.createElement("p");
+        note.className = "ds-select-status";
+        note.setAttribute("role", "status");
+        note.textContent = "No matching option. Try a different search.";
+        note.hidden = true;
         input.addEventListener("input", () => {
           const query = input.value.trim().toLocaleLowerCase();
+          let visible = 0;
           list.querySelectorAll("button").forEach((button) => {
             button.hidden = query
               ? !button.textContent.toLocaleLowerCase().includes(query)
               : false;
+            if (!button.hidden) visible += 1;
           });
+          note.hidden = !query || visible > 0;
         });
         input.addEventListener("keydown", (event) => {
           if (event.key !== "Enter") return;
@@ -170,7 +180,8 @@
           if (visible.length === 1) visible[0].click();
           else visible[0]?.focus();
         });
-        body.insertBefore(input, body.firstChild);
+        body.insertBefore(note, body.firstChild);
+        body.insertBefore(input, note);
       });
     });
   };

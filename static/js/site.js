@@ -16,10 +16,22 @@
   };
 
   // Capture handles broken images inserted later by the conversation polling UI too.
+  const showAttachmentUnavailable = (media) => {
+    const wrap = media.closest('[data-attachment-wrap]');
+    if (!wrap || wrap.dataset.attachmentResolved === 'true') return;
+    wrap.dataset.attachmentResolved = 'true';
+    const mediaToggle = wrap.querySelector('[data-attachment-media-toggle]');
+    if (mediaToggle) mediaToggle.hidden = true;
+    media.hidden = true;
+    const placeholder = wrap.querySelector('[data-attachment-unavailable]');
+    if (placeholder) placeholder.hidden = false;
+  };
   document.addEventListener('error', (event) => {
     const image = event.target;
     if (image && image.matches && image.matches('img[data-profile-photo-image]')) {
       showProfilePhotoFallback(image);
+    } else if (image && image.matches && image.matches('[data-attachment-media]')) {
+      showAttachmentUnavailable(image);
     }
   }, true);
   document.querySelectorAll('img[data-profile-photo-image]').forEach((image) => {

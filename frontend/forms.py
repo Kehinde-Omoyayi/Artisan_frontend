@@ -16,6 +16,7 @@ from .profile_links import (
     SOCIAL_MEDIA_PLATFORM_CHOICES,
     clean_profile_links,
 )
+from frontend.pricing import MIN_INDIVIDUAL_PRICE_MESSAGE, min_price_error
 
 INPUT_CLASS = "field-input"
 _MEANINGFUL_WORD = re.compile(r"[^\W\d_]+(?:[’'-][^\W\d_]+)*", re.UNICODE)
@@ -1063,9 +1064,16 @@ class ArtisanServiceForm(StyledForm):
         label="Starting budget",
         max_digits=12,
         decimal_places=2,
-        min_value=0,
         required=False,
-        help_text="Optional starting budget for this service offering.",
+        help_text="Optional starting budget for this service offering. Minimum ₦100.00 when given.",
+        widget=forms.NumberInput(
+            attrs={
+                "min": "100",
+                "step": "0.01",
+                "inputmode": "decimal",
+                "data-min-price": "required",
+            }
+        ),
     )
 
     ANYWHERE_COVERAGE_VALUE = "__anywhere__"
@@ -1121,6 +1129,15 @@ class ArtisanServiceForm(StyledForm):
         ]
 
         self._service_category_by_name = self.service_category_by_name
+
+    def clean_starting_price(self):
+        value = self.cleaned_data.get("starting_price")
+        if value is None:
+            return value  # "Budget on request" stays a valid, open choice.
+        error = min_price_error(value, allow_zero=False)
+        if error:
+            raise forms.ValidationError(MIN_INDIVIDUAL_PRICE_MESSAGE)
+        return value
 
     def clean(self):
         cleaned = super().clean()

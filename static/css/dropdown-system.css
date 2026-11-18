@@ -660,3 +660,13 @@ select.ds-native {
     transition: none;
   }
 }
+
+/* Author display rules (flex/grid) outrank the UA [hidden] style, which is why
+   the typed-search filter looked dead: buttons were hidden but still painted.
+   Restore the semantic for every list the search boxes filter in place. */
+.artisan-pick-option[hidden],
+.artisan-filter-option[hidden],
+.request-pick-option[hidden],
+.match-pick-options > button[hidden] {
+  display: none !important;
+}

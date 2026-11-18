@@ -9,18 +9,14 @@
       <span>Artisan <span class="landing-brand__light">Market</span></span>
     </a>
     <nav class="landing-footer__links" aria-label="Footer navigation">
-      {% if authenticated and nav_role == 'staff' and platform_manager %}
-        <a href="{% url 'home' %}">Manager Overview</a>
+      {% if authenticated and nav_role == 'staff' %}
+        {% if staff_nav.can_view_manager_overview %}<a href="{% url 'home' %}">Manager Overview</a>{% endif %}
+        {% if staff_nav.is_support_staff or staff_nav.is_superuser %}
         <a href="{% url 'support-operations' %}">Support Operations</a>
         <a href="{% url 'support-cases' %}">Case Queue</a>
-        <a href="{% url 'support-refunds' %}">Refunds</a>
-        <a href="{% url 'support-staff' %}">Support Team</a>
-        <form method="post" action="{% url 'logout' %}" class="landing-nav__logout-form js-confirm-form" data-confirm-logout data-confirm="You will be signed out of this browser session.">{% csrf_token %}<button class="landing-nav__logout" type="submit">Log Out</button></form>
-      {% elif authenticated and nav_role == 'staff' %}
-        <a href="{% url 'support-operations' %}">Support Operations</a>
-        <a href="{% url 'support-cases' %}">Case Queue</a>
-        {% if support_capabilities.can_view_refunds or platform_manager %}<a href="{% url 'support-refunds' %}">Refunds</a>{% endif %}
-        {% if support_capabilities.can_manage_staff or platform_manager %}<a href="{% url 'support-staff' %}">Support Team</a>{% endif %}
+        {% endif %}
+        {% if staff_nav.can_view_refunds %}<a href="{% url 'support-refunds' %}">Refunds</a>{% endif %}
+        {% if staff_nav.can_manage_staff %}<a href="{% url 'support-staff' %}">Support Team</a>{% endif %}
         <form method="post" action="{% url 'logout' %}" class="landing-nav__logout-form js-confirm-form" data-confirm-logout data-confirm="You will be signed out of this browser session.">{% csrf_token %}<button class="landing-nav__logout" type="submit">Log out</button></form>
       {% elif authenticated %}
         <a href="{% url 'home' %}">Dashboard</a>
@@ -59,18 +55,14 @@
       <span>Artisan <span class="brand__light">Market</span></span>
     </a>
     <nav class="site-footer__links" aria-label="Footer navigation">
-      {% if authenticated and nav_role == 'staff' and platform_manager %}
-        <a href="{% url 'home' %}">Manager Overview</a>
+      {% if authenticated and nav_role == 'staff' %}
+        {% if staff_nav.can_view_manager_overview %}<a href="{% url 'home' %}">Manager Overview</a>{% endif %}
+        {% if staff_nav.is_support_staff or staff_nav.is_superuser %}
         <a href="{% url 'support-operations' %}">Support Operations</a>
         <a href="{% url 'support-cases' %}">Case Queue</a>
-        <a href="{% url 'support-refunds' %}">Refunds</a>
-        <a href="{% url 'support-staff' %}">Support Team</a>
-        <form method="post" action="{% url 'logout' %}" class="inline-form js-confirm-form" data-confirm-logout data-confirm="You will be signed out of this browser session.">{% csrf_token %}<button class="nav-logout" type="submit">Log Out</button></form>
-      {% elif authenticated and nav_role == 'staff' %}
-        <a href="{% url 'support-operations' %}">Support Operations</a>
-        <a href="{% url 'support-cases' %}">Case Queue</a>
-        {% if support_capabilities.can_view_refunds %}<a href="{% url 'support-refunds' %}">Refunds</a>{% endif %}
-        {% if support_capabilities.can_manage_staff %}<a href="{% url 'support-staff' %}">Support Team</a>{% endif %}
+        {% endif %}
+        {% if staff_nav.can_view_refunds %}<a href="{% url 'support-refunds' %}">Refunds</a>{% endif %}
+        {% if staff_nav.can_manage_staff %}<a href="{% url 'support-staff' %}">Support Team</a>{% endif %}
         <form method="post" action="{% url 'logout' %}" class="inline-form js-confirm-form" data-confirm-logout data-confirm="You will be signed out of this browser session.">{% csrf_token %}<button class="nav-logout" type="submit">Log out</button></form>
       {% elif authenticated %}
         <a href="{% url 'home' %}">Dashboard</a>
